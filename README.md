@@ -125,7 +125,3 @@ DeepSeek 不提供 Embeddings API，自实现 `LocalEmbeddings` 类继承 LangCh
 ## 📄 许可证
 
 MIT License
-
----
-
-**求职助力项目** — 展示 Agent 设计、Prompt 工程、记忆管理、全栈工程化能力。
