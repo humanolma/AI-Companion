@@ -37,6 +37,5 @@ class Settings(BaseSettings):
         env_file = ".env"
         extra = "ignore"  # 忽略、外字段
 
-
 # 全局配置实例
 settings = Settings()
