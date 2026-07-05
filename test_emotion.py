@@ -14,7 +14,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.agent.companion import CompanionAgent
 from src.config.settings import settings
 
-
 def test_emotion():
     print("=" * 60)
     print(f"测试：{settings.companion_name} 情感感知功能")
@@ -57,7 +56,6 @@ def test_emotion():
     print(f"\n{'=' * 60}")
     print("测试完成！")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     test_emotion()
