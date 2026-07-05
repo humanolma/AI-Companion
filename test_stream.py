@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.agent.companion import CompanionAgent
 from src.config.settings import settings
 
-
 def test_stream():
     print("=" * 60)
     print(f"测试：{settings.companion_name} 流式输出功能")
