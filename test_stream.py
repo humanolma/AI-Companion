@@ -42,6 +42,5 @@ def test_stream():
     print("测试完成！")
     print("=" * 60)
 
-
 if __name__ == "__main__":
     test_stream()
