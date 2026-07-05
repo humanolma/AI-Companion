@@ -12,7 +12,6 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from src.agent.llm import get_llm
 from src.config.settings import settings
 
-
 # === 情绪定义 ===
 EMOTIONS = {
     "happy": {
