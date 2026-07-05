@@ -16,7 +16,6 @@ from src.agent.llm import get_llm
 from src.agent.emotion import EmotionDetector
 from src.config.settings import settings
 
-
 class CompanionAgent:
     """虚拟伴侣 Agent 主类"""
 
