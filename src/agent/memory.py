@@ -9,7 +9,6 @@ from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 from src.config.settings import settings
 
-
 class LocalEmbeddings(Embeddings):
     """本地 sentence-transformers embedding 包装类（不依赖 langchain 版本）"""
 
@@ -21,7 +20,6 @@ class LocalEmbeddings(Embeddings):
 
     def embed_query(self, text: str) -> List[float]:
         return self._model.encode(text, convert_to_numpy=True).tolist()
-
 
 class LongTermMemory:
     """长期记忆管理器（基于 ChromaDB 向量数据库）"""
@@ -83,7 +81,6 @@ class LongTermMemory:
         """清空该用户的长期记忆"""
         self.vectorstore.delete_collection()
         self._init_vectorstore()
-
 
 def get_memory(user_id: str = "default") -> LongTermMemory:
     """工厂函数：获取长期记忆实例"""
