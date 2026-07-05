@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.agent.companion import CompanionAgent
 from src.config.settings import settings
 
-
 def test_long_term_memory():
     """测试长期记忆功能"""
     print("=" * 60)
@@ -54,7 +53,6 @@ def test_long_term_memory():
     print("\n" + "=" * 60)
     print("测试完成！")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     # 确保数据目录存在
