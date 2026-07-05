@@ -28,10 +28,8 @@ app = FastAPI(title="AI Virtual Companion")
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-
 class ChatRequest(BaseModel):
     message: str
-
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -40,7 +38,6 @@ async def index():
     with open(html_path, "r", encoding="utf-8") as f:
         return f.read()
 
-
 @app.get("/api/history")
 async def get_history():
     """获取历史对话"""
@@ -48,7 +45,6 @@ async def get_history():
         "history": agent.get_history_display(),
         "emotion": agent.current_emotion,
     })
-
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
@@ -86,20 +82,17 @@ async def chat(req: ChatRequest):
         },
     )
 
-
 @app.post("/api/reset")
 async def reset():
     """重置当前对话（不删文件）"""
     agent.reset()
     return JSONResponse({"status": "ok", "message": "对话已重置"})
 
-
 @app.post("/api/clear")
 async def clear_all():
     """清除所有数据"""
     agent.clear_all_data()
     return JSONResponse({"status": "ok", "message": "所有数据已清除"})
-
 
 @app.get("/api/info")
 async def info():
