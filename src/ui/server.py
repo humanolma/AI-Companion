@@ -20,13 +20,16 @@ from src.config.settings import settings
 
 # 创建 Agent 实例
 os.makedirs(settings.chroma_persist_dir, exist_ok=True)
+# ========== 全局单例 Agent（懒加载，首次访问时才初始化）==========
 _agent = None
 
-def get_agent():
-    global _agent
-    if _agent is None:
-        _agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
-    return _agent
+def __getattr__(name):
+    if name == "agent":
+        global _agent
+        if _agent is None:
+            _agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
+        return _agent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 app = FastAPI(title="AI Virtual Companion")
