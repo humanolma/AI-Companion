@@ -1,25 +1,47 @@
 """
 长期记忆模块 — 使用 ChromaDB 向量数据库存储和检索对话历史
 
-⚠️ 注意：DeepSeek 不支持 embeddings API，本模块使用本地 sentence-transformers 模型
+⚠️ 注意：使用阿里云 DashScope text-embedding-v3 原生 API
 """
+import requests
 from typing import List
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
-from sentence_transformers import SentenceTransformer
 from src.config.settings import settings
 
-class LocalEmbeddings(Embeddings):
-    """本地 sentence-transformers embedding 包装类（不依赖 langchain 版本）"""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cpu"):
-        self._model = SentenceTransformer(model_name, device=device)
+class DashScopeEmbeddings(Embeddings):
+    """阿里云 DashScope text-embedding-v3"""
+
+    def __init__(self, api_key: str, model: str = "text-embedding-v3"):
+        self.api_key = api_key
+        self.model = model
+        self.url = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding"
+
+    def _call_api(self, texts: List[str], text_type: str = "document") -> List[List[float]]:
+        resp = requests.post(
+            self.url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "input": {"texts": texts},
+                "parameters": {"text_type": text_type},
+            },
+        )
+        data = resp.json()
+        if data.get("code") and data["code"] != "":
+            raise RuntimeError(f"DashScope embedding error: {data}")
+        return [e["embedding"] for e in data["output"]["embeddings"]]
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return self._model.encode(texts, convert_to_numpy=True).tolist()
+        return self._call_api(texts, text_type="document")
 
     def embed_query(self, text: str) -> List[float]:
-        return self._model.encode(text, convert_to_numpy=True).tolist()
+        return self._call_api([text], text_type="query")[0]
+
 
 class LongTermMemory:
     """长期记忆管理器（基于 ChromaDB 向量数据库）"""
@@ -29,10 +51,10 @@ class LongTermMemory:
         self.db_path = settings.chroma_persist_dir
         self.collection_name = f"memory_{user_id}"
 
-        # 使用本地 sentence-transformers 模型做 embedding（无需外部 API）
-        self.embeddings = LocalEmbeddings(
-            model_name=settings.embedding_model,
-            device=settings.embedding_device,
+        # 使用阿里云 DashScope text-embedding-v3 原生 API
+        self.embeddings = DashScopeEmbeddings(
+            api_key=settings.dashscope_api_key,
+            model=settings.embedding_model,
         )
 
         self.vectorstore = None

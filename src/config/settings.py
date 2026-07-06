@@ -10,15 +10,16 @@ class Settings(BaseSettings):
     # === API 配置 ===
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
+    dashscope_api_key: str = ""
     
     # === 模型配置 ===
-    model_name: str = "deepseek-chat"
+    model_name: str = "deepseek-v4-flash"
     temperature: float = 0.7
     
     # === Embedding 配置（用于长期记忆）===
-    # DeepSeek 不支持 embeddings，使用本地 sentence-transformers
-    embedding_model: str = "all-MiniLM-L6-v2"  # sentence-transformers 模型
-    embedding_device: str = "cpu"  # "cpu" or "cuda"
+    # 使用阿里云 DashScope text-embedding-v3
+    embedding_model: str = "text-embedding-v3"
+    embedding_device: str = "cpu"  # "cpu" or "cuda"（仅本地模型使用）
     
     # === 记忆配置 ===
     chroma_persist_dir: str = "./data/chroma"

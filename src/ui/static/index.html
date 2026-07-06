@@ -217,12 +217,14 @@
             justify-content: center;
             font-size: 16px;
         }
-        .msg-avatar.bot {
+        .msg-avatar.bot,
+        .msg-avatar.assistant {
             background: linear-gradient(135deg, #a78bfa, #ec4899);
             box-shadow: 0 2px 12px rgba(167, 139, 250, 0.3);
             overflow: hidden;
         }
-        .msg-avatar.bot img {
+        .msg-avatar.bot img,
+        .msg-avatar.assistant img {
             width: 100%;
             height: 100%;
             object-fit: cover;
@@ -543,7 +545,7 @@
 
             const avatar = document.createElement('div');
             avatar.className = `msg-avatar ${role}`;
-            if (role === 'bot') {
+            if (role === 'bot' || role === 'assistant') {
                 const img = document.createElement('img');
                 img.src = '/static/avatar.jpg';
                 img.alt = '小梦';
