@@ -20,7 +20,14 @@ from src.config.settings import settings
 
 # 创建 Agent 实例
 os.makedirs(settings.chroma_persist_dir, exist_ok=True)
-agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
+_agent = None
+
+def get_agent():
+    global _agent
+    if _agent is None:
+        _agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
+    return _agent
+
 
 app = FastAPI(title="AI Virtual Companion")
 
