@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # 高德地图 MCP 由 amap_maps_api_key（系统环境变量）自动启用
     # 额外 MCP 服务器可在此 JSON 文件中配置（与 langchain-mcp-adapters 格式一致）
     mcp_servers_json: str = "./data/mcp_servers.json"
+
+    # === 用量监控与成本控制 ===
+    daily_budget_limit: float = 0           # 每日预算上限（元），0 = 不限制
+    usage_data_file: str = "./data/usage.json"
+    deepseek_input_price: float = 0.55       # 输入价格（元/百万 tokens）
+    deepseek_output_price: float = 2.19      # 输出价格（元/百万 tokens）
     
     # === 伴侣人设 ===
     companion_name: str = "小梦"

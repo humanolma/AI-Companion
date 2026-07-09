@@ -13,12 +13,16 @@ MCP 工具管理器 — 连接 MCP 服务器并加载 LangChain 工具
 """
 import os
 import json
+import logging
 import asyncio
+import subprocess
 from typing import List
 from langchain_core.tools import BaseTool
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from src.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class _MCPTool(BaseTool):
@@ -148,8 +152,9 @@ class MCPToolManager:
                 tools_result = await session.list_tools()
                 for tool_spec in tools_result.tools:
                     self.tools.append(_MCPTool(tool_spec, session, session_cm, proc_cm, self._loop))
+                logger.info("[MCP] %s 已连接，加载 %d 个工具", name, len(tools_result.tools))
             except Exception as e:
-                print(f"[MCP] 服务器 {name} 连接失败，已跳过：{e}")
+                logger.warning("[MCP] 服务器 %s 连接失败，已跳过：%s", name, e)
                 # 清理已进入但未加入 _sessions 的上下文管理器，
                 # 否则关闭时它们会成为孤儿，触发 anyio cancel scope 报错
                 if session_cm is not None:
@@ -163,7 +168,7 @@ class MCPToolManager:
                     except BaseException:
                         pass
         if not self.tools:
-            print("[MCP] 未加载到任何工具，降级为无工具模式")
+            logger.warning("[MCP] 未加载到任何工具，降级为无工具模式")
 
     def get_tools(self) -> List[BaseTool]:
         return self.tools
@@ -172,8 +177,10 @@ class MCPToolManager:
         """断开 MCP 服务器（释放子进程）"""
         # 先摘除工具，防止关闭期间被 LLM 调用
         self.tools = []
-        for session, session_cm, proc_cm in self._sessions:
-            # 分别 try，一个失败不影响另一个清理
+        sessions = self._sessions
+        self._sessions = []
+        self._loop = None
+        for session, session_cm, proc_cm in sessions:
             try:
                 await session_cm.__aexit__(None, None, None)
             except BaseException:
@@ -182,11 +189,19 @@ class MCPToolManager:
                 await proc_cm.__aexit__(None, None, None)
             except BaseException:
                 pass
-        self._sessions = []
-        self._loop = None
-        # Windows ProactorEventLoop：给事件循环留一点时间处理 npx 子进程管道关闭的 IOCP 回调，
-        # 否则循环先于管道清理完成而关闭，__del__ 中会报 "Event loop is closed" / "I/O operation on closed pipe"
-        try:
-            await asyncio.sleep(0.1)
-        except BaseException:
-            pass
+        sessions.clear()
+        # Windows：强制终止残留的 npx / node 子进程，避免 Event loop is closed
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/FI", "IMAGENAME eq node.exe"],
+                    capture_output=True, timeout=5,
+                )
+            except Exception:
+                pass
+            # 给 ProactorEventLoop IOCP 回调足够时间处理管道关闭
+            for _ in range(3):
+                try:
+                    await asyncio.sleep(0.15)
+                except BaseException:
+                    break

@@ -7,10 +7,14 @@
 
 情绪类型：happy / sad / angry / anxious / neutral
 """
+import logging
 from typing import Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.agent.llm import get_llm
+from src.agent.usage import estimate_tokens
 from src.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 # === 情绪定义 ===
 EMOTIONS = {
@@ -54,8 +58,9 @@ happy, sad, angry, anxious, neutral
 class EmotionDetector:
     """情绪检测器：用 LLM 分析用户消息的情绪"""
 
-    def __init__(self):
+    def __init__(self, usage_tracker=None):
         self.llm = get_llm()
+        self.usage_tracker = usage_tracker
         # 缓存上一次检测结果（避免重复分析）
         self._last_input: Optional[str] = None
         self._last_emotion: str = "neutral"
@@ -82,6 +87,13 @@ class EmotionDetector:
             # 校验返回值
             if emotion not in EMOTIONS:
                 emotion = "neutral"
+
+            # 记录用量（情绪分析是轻量调用）
+            if self.usage_tracker:
+                tokens_in = estimate_tokens(EMOTION_ANALYSIS_PROMPT + user_input)
+                tokens_out = estimate_tokens(emotion)
+                self.usage_tracker.record(tokens_in, tokens_out)
+                logger.debug("情绪用量: +%d in / +%d out tokens", tokens_in, tokens_out)
 
             # 更新缓存
             self._last_input = user_input

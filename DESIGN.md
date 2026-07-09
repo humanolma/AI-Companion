@@ -1,288 +1,648 @@
-# AI 虚拟伴侣 — 项目设计与技术分析
+# AI 智能助手 — 项目设计文档
 
-## 一、项目背景
-
-**AI 虚拟伴侣（AI Virtual Companion）** 是一个基于 LangChain + DeepSeek 的 AI 对话应用，核心目标是打造一个有记忆、有情感、有个性的 AI 对话伙伴。
-
-### 核心能力
-
-- 🧠 **记忆系统**：双层记忆架构，短期对话上下文 + ChromaDB 长期记忆，跨会话也能记住用户信息
-- 💖 **情感感知**：识别用户情绪（开心/低落/生气/焦虑/平静），动态调整回复语气
-- 🎭 **角色人设**：可自定义伴侣的性格、背景故事、说话风格
-- ⌨️ **流式输出**：SSE 流式推送，打字机效果实时反馈
-- 💾 **对话持久化**：JSON 本地存储，重启不丢失对话记录
-
-### 技术栈
-
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| LLM | DeepSeek API (`deepseek-v4-flash`) | OpenAI 兼容接口，成本低 |
-| Agent 框架 | LangChain 1.x | Prompt 模板、链式调用、流式输出 |
-| 长期记忆 | ChromaDB | 向量数据库，语义检索历史对话 |
-| Embedding | 阿里云 DashScope `text-embedding-v3` | 云端 API，无需本地资源 |
-| 后端 | FastAPI | REST API + SSE 流式接口 |
-| 前端 | 原生 HTML/CSS/JS | 玻璃拟态 UI，零框架依赖 |
-| 配置管理 | pydantic-settings | 类型安全的环境变量管理 |
+> **面向读者**：接手本项目的开发者。本文档覆盖完整项目结构、模块职责、数据流、关键设计决策、调试方法与常见问题，帮助快速定位代码和排查问题。
 
 ---
 
-## 二、系统设计
-
-### 2.1 分层架构
+## 一、项目骨架：30 秒速览
 
 ```
-┌──────────────────────────────────────────┐
-│  UI 层：FastAPI + 原生 HTML/CSS/JS        │
-│  (REST API + SSE 流式接口 + 玻璃拟态UI)   │
-├──────────────────────────────────────────┤
-│  Agent 层：CompanionAgent 主类            │
-│  ├── LLM 封装          (DeepSeek API)     │
-│  ├── 情感感知模块      (EmotionDetector)  │
-│  ├── 短期记忆管理      (MessagesPlaceholder)│
-│  └── 长期记忆管理      (ChromaDB)         │
-├──────────────────────────────────────────┤
-│  Prompt 层：ChatPromptTemplate            │
-├──────────────────────────────────────────┤
-│  Config 层：Pydantic Settings             │
-└──────────────────────────────────────────┘
+用户浏览器  →  FastAPI SSE  →  CompanionAgent  →  DeepSeek API
+                  ↑                  │
+                  │    ┌─────────────┼─────────────┐
+                  │    ▼             ▼             ▼
+                  │  Emotion      Memory       MCP Tools
+                  │ (情绪识别)  (双层记忆)  (高德/Tavily)
+                  │    │             │             │
+                  │    └─────────────┼─────────────┘
+                  │                  ▼
+                  │           System Prompt 组装
+                  │                  │
+                  └────── 流式回复 ←─┘
 ```
 
-### 2.2 项目结构
+**一句话描述**：用户输入文字 → 情绪检测 → 检索短期/长期记忆 → 组装 Prompt → LLM 生成回复（可选调 MCP 工具）→ 流式推送到浏览器 → 更新记忆。
+
+---
+
+## 二、完整项目结构
 
 ```
-ai-companion/
-├── main.py                       # 入口文件（uvicorn 启动 FastAPI）
-├── requirements.txt
-├── src/
-│   ├── config/
-│   │   └── settings.py           # Pydantic Settings 配置管理
-│   ├── agent/
-│   │   ├── llm.py                # LLM 初始化（DeepSeek/OpenAI 兼容）
-│   │   ├── companion.py          # 虚拟伴侣 Agent 主类
-│   │   ├── memory.py             # 长期记忆（ChromaDB + DashScope Embedding）
-│   │   └── emotion.py            # 情感感知模块
-│   ├── prompts/
-│   │   └── companion_prompt.py   # Prompt 模板
-│   └── ui/
-│       ├── server.py             # FastAPI 后端（REST + SSE）
-│       └── static/
-│           ├── index.html        # 前端页面（玻璃拟态设计）
-│           └── avatar.jpg        # 伴侣头像
-├── test_basic.py                 # 基础对话测试
-├── test_long_term_memory.py      # 长期记忆测试
-├── test_emotion.py               # 情感感知测试
-└── test_stream.py                # 流式输出测试
+AI-Companion/
+├── main.py                          # [入口] uvicorn 启动 FastAPI
+├── requirements.txt                 # Python 依赖
+├── .env.example                     # 环境变量模板（复制为 .env 使用）
+├── .gitignore
+│
+├── BRD.md                           # 业务需求说明书（产品/功能规划）
+├── DESIGN.md                        # ← 当前文件：技术设计文档
+├── README.md                        # 项目简介
+│
+├── test_basic.py                    # [测试] 基础对话功能
+├── test_emotion.py                  # [测试] 情绪识别链路
+├── test_long_term_memory.py         # [测试] 长期记忆存取与检索
+├── test_stream.py                   # [测试] 流式输出
+│
+├── assets/
+│   └── companion_avatar.svg         # 头像 SVG，前端引用
+│
+├── data/                            # 运行时数据（.gitignore）
+│   ├── chat_history.json            # 对话历史持久化文件
+│   ├── mcp_servers.json             # 额外 MCP 服务器配置（可选）
+│   └── chroma/                      # ChromaDB 向量数据库目录
+│
+└── src/
+    ├── config/
+    │   └── settings.py              # [配置] Pydantic Settings，所有环境变量
+    │
+    ├── agent/                       # [核心] Agent 层 — 整个系统的大脑
+    │   ├── companion.py             # CompanionAgent 主类：对话编排、记忆管理
+    │   ├── llm.py                   # LLM 初始化：ChatOpenAI 封装 DeepSeek
+    │   ├── memory.py                # 长期记忆：ChromaDB + DashScope Embedding
+    │   ├── emotion.py               # 情感感知：LLM 情绪分析 + 自适应回复
+    │   └── tools.py                 # MCP 工具：高德地图 + Tavily 搜索 + 扩展
+    │
+    ├── prompts/
+    │   └── companion_prompt.py      # Prompt 模板（独立版，实际已内建到 companion.py）
+    │
+    └── ui/                          # [前端] Web 交互层
+        ├── server.py                # FastAPI 应用：REST API + SSE + 生命周期管理
+        └── static/
+            ├── index.html           # 前端页面：玻璃拟态 UI，零框架依赖
+            └── avatar.jpg           # 头像图片
 ```
 
-### 2.3 双层级记忆架构（核心亮点）
+---
 
-这是系统最核心的设计，解决 AI 对话中"金鱼记忆"的问题：
+## 三、模块详解
 
-```
-                 用户输入
-                    │
-     ┌──────────────┼──────────────┐
-     ▼              ▼              ▼
-  情感检测       语义检索        获取短期
- (额外LLM调用)   ChromaDB       记忆上下文
-     │              │              │
-     │        召回最相关k条         │
-     │        历史记忆 (k=3)       │
-     │              │              │
-     └──────────────┼──────────────┘
-                    ▼
-          组装 System Prompt
-     (基础人设 + 情绪调整 + 长期记忆)
-                    │
-                    ▼
-               LLM 生成回复
-                    │
-     ┌──────────────┼──────────────┐
-     ▼              ▼              ▼
-  更新短期记忆   存入长期记忆    JSON 持久化
- (滑动窗口)     (ChromaDB)     (本地文件)
+### 3.1 `main.py` — 应用入口
+
+**职责**：启动 uvicorn 服务器，屏蔽第三方库噪音日志。
+
+```python
+# 核心逻辑
+uvicorn.run("src.ui.server:app", host="0.0.0.0", port=8080)
 ```
 
-- **短期记忆**：通过 LangChain `MessagesPlaceholder` 保留最近 N 轮对话上下文（默认 20 条消息），直接注入 Prompt，保证对话连贯性。
-- **长期记忆**：基于 ChromaDB 向量数据库，每轮对话自动存入，下次对话时通过语义检索召回最相关的 k 条（默认 3 条）历史记忆，注入 System Prompt，实现**跨会话记忆**。
+- 设置环境变量屏蔽 huggingface/tokenizers 的进度条和警告
+- 端口可通过 `PORT` 环境变量覆盖
+- 本身不含业务逻辑，所有能力在 `src/` 下
 
-### 2.4 情感感知闭环
+---
+
+### 3.2 `src/config/settings.py` — 配置中枢
+
+**类**：`Settings(pydantic_settings.BaseSettings)`
+
+**全局单例**：`settings = Settings()`，模块导入时自动从 `.env` 读取。
+
+| 分类 | 字段 | 默认值 | 说明 |
+|------|------|--------|------|
+| **API Key** | `deepseek_api_key` | `""` | 必填，核心 LLM |
+| | `dashscope_api_key` | `""` | 必填，Embedding 向量化 |
+| | `amap_maps_api_key` | `""` | 可选，高德地图工具 |
+| | `tavily_api_key` | `""` | 可选，联网搜索 |
+| **模型** | `model_name` | `deepseek-v4-flash` | LLM 模型 |
+| | `temperature` | `0.7` | 生成温度 |
+| **记忆** | `chroma_persist_dir` | `./data/chroma` | ChromaDB 目录 |
+| | `memory_retrieval_k` | `3` | 每次检索返回条数 |
+| | `max_short_term_history` | `20` | 短期记忆上限（条） |
+| **人设** | `companion_name` | `小梦` | 角色名 |
+| | `companion_personality` | `温柔、善解人意、有点俏皮` | 性格 |
+| | `companion_backstory` | `""` | 背景故事 |
+| **MCP** | `mcp_servers_json` | `./data/mcp_servers.json` | 额外 MCP 服务器配置 |
+| **持久化** | `chat_history_file` | `./data/chat_history.json` | 对话存储路径 |
+
+> **修改指南**：新增配置项只需在此文件 `Settings` 类中加字段，`.env` 中对应添加即可，全局通过 `settings.xxx` 访问。
+
+---
+
+### 3.3 `src/agent/llm.py` — LLM 初始化
+
+**职责**：创建 LangChain `ChatOpenAI` 实例，封装 DeepSeek API。
+
+```python
+def get_llm(temperature: float | None = None, streaming: bool = True):
+    return ChatOpenAI(
+        model=settings.model_name,
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        temperature=temperature or settings.temperature,
+        streaming=streaming,
+    )
+```
+
+- `streaming=True` 时返回的 LLM 支持 `chain.stream()` 流式调用
+- `streaming=False` 时用于情绪分析、工具决策等非流式场景
+
+---
+
+### 3.4 `src/agent/companion.py` — Agent 主类（最核心文件）
+
+**类**：`CompanionAgent`
+
+这是整个系统的**编排器**。所有模块（记忆、情绪、工具、LLM）在此汇聚。
+
+#### 3.4.1 初始化流程
 
 ```
-用户输入
+CompanionAgent(use_long_term_memory=True, use_emotion=True)
+    │
+    ├── 1. 创建 get_llm() 实例
+    ├── 2. 如果 use_long_term_memory → 初始化 LongTermMemory (ChromaDB)
+    ├── 3. 如果 use_emotion → 初始化 EmotionDetector
+    ├── 4. _load_history() → 从 JSON 恢复上次对话
+    └── 5. self.tools = []  (由外部 server.py 注入)
+```
+
+#### 3.4.2 关键方法
+
+| 方法 | 说明 |
+|------|------|
+| `_build_system_prompt()` | 组装 System Prompt：基础人设 + 情绪调整指令 + 长期记忆 |
+| `_build_prompt()` | 组装 LangChain `ChatPromptTemplate`，含 `MessagesPlaceholder` 短期记忆 |
+| `_prepare_context()` | 完整上下文：情绪检测 → 记忆检索 → System Prompt 组装 |
+| `chat_stream(user_input)` | **主入口**：流式对话生成器，yield 逐字推给前端 |
+| `_run_with_tools(response, context)` | 工具调用循环：检测 tool_calls → 执行 → 回填结果 → 重新生成（最多 5 轮） |
+| `set_tools(tools)` | 注入 MCP 工具列表（由 server.py 调用） |
+| `_save_history()` / `_load_history()` | JSON 读写对话历史 |
+| `reset()` | 清空短期记忆（不删文件、不删长期记忆） |
+| `clear_all_data()` | 删除所有数据（对话 + ChromaDB + JSON） |
+
+#### 3.4.3 对话完整链路
+
+```
+用户输入 "今天天气怎么样"
     │
     ▼
-LLM 情绪分析 (额外一次调用)
-    │  只返回标签词：happy/sad/angry/anxious/neutral
-    ▼
-识别 5 种情绪
+chat_stream(user_input)
     │
-    ▼
-生成情绪调整指令 → 注入 System Prompt
-    │  • happy  → "分享快乐，语气轻快活泼"
-    │  • sad    → "温柔安慰，多倾听，不急着给建议"
-    │  • angry  → "保持冷静同理心，先认同感受"
-    │  • anxious→ "安抚鼓励，帮助放松"
-    │  • neutral→ "保持一贯温柔风格"
-    ▼
-LLM 生成匹配语气的回复
+    ├── 1. _prepare_context(user_input)
+    │       ├── emotion.detect(user_input)           → "neutral"
+    │       ├── long_term_memory.retrieve(user_input) → 召回 k=3 条记忆
+    │       └── _build_system_prompt(emotion, memories)
+    │           生成完整 System Prompt（含人设 + 情绪指令 + 记忆）
     │
-    ▼
-前端实时展示情绪标签（颜色 + 动画）
+    ├── 2. chain.stream(context)  →  开始流式生成
+    │
+    ├── 3. 检测 response.tool_calls  →  if 有工具调用:
+    │       └── _run_with_tools(response, context)
+    │             ├── 执行工具 (maps_weather / tavily_search)
+    │             ├── 将结果作为 ToolMessage 追加到上下文
+    │             └── 重新调用 LLM → GOTO step 2（最多 5 轮）
+    │
+    ├── 4. 流式 yield chunk  →  推送到前端
+    │
+    └── 5. 流结束后（一次性批量）:
+            ├── self.history.append(HumanMessage)
+            ├── self.history.append(AIMessage)
+            ├── self.long_term_memory.add_memory(user_input, full_response)
+            └── _save_history()
 ```
 
-实现位于 `src/agent/emotion.py`，情绪分析 Prompt 设计为极简格式，只返回标签词，减少 token 消耗。
+#### 3.4.4 工具调用循环（tool calling loop）
 
-### 2.5 流式输出管道
+- 最多 5 轮迭代，防止死循环
+- 每一轮：LLM 返回 tool_calls → Agent 执行工具 → 结果追加为 ToolMessage → 再次交给 LLM
+- 工具执行通过 `_MCPTool._run()` 走 `run_coroutine_threadsafe` 回到原始事件循环，避免跨循环死锁
+
+---
+
+### 3.5 `src/agent/memory.py` — 长期记忆
+
+**类**：
+| 类 | 职责 |
+|------|------|
+| `DashScopeEmbeddings` | 阿里云 DashScope Embedding API 适配层，继承 LangChain `Embeddings` |
+| `LongTermMemory` | ChromaDB 管理：存入、检索、清除 |
+
+#### DashScopeEmbeddings 设计要点
+
+```python
+class DashScopeEmbeddings(Embeddings):
+    def embed_documents(self, texts) -> List[List[float]]:
+        return self._call_api(texts, text_type="document")  # 存储时用
+
+    def embed_query(self, text) -> List[float]:
+        return self._call_api([text], text_type="query")[0]  # 检索时用
+```
+
+- `text_type="document"` 用于存储记忆时向量化
+- `text_type="query"` 用于检索时向量化，DashScope 对两种类型有不同优化
+- 底层直接调用 DashScope REST API（`POST /compatible-mode/v1/embeddings`）
+
+#### LongTermMemory 关键方法
+
+```python
+class LongTermMemory:
+    def add_memory(user_input, ai_response):
+        """存入：user_input + ai_response 拼接为一条记忆，向量化后写入 ChromaDB"""
+
+    def retrieve(query, k=None):
+        """检索：将 query 向量化，在 ChromaDB 中查找最相似的 k 条记忆"""
+
+    def clear():
+        """清除：删除 ChromaDB collection"""
+```
+
+#### ChromaDB 存储结构
+
+- Collection 名：`companion_memory`
+- 每条记忆：`{"user": "...", "ai": "..."}` 拼接为文本
+- Metadata：`{"timestamp": ISO 格式, "user_id": "default"}`
+- 持久化路径：`settings.chroma_persist_dir`（默认 `./data/chroma`）
+
+---
+
+### 3.6 `src/agent/emotion.py` — 情感感知
+
+**类**：`EmotionDetector`
+
+**5 种情绪**：`happy`、`sad`、`angry`、`anxious`、`neutral`
+
+**核心方法**：`detect(user_input) → str`
+
+```python
+def detect(self, user_input: str) -> str:
+    # 1. 缓存命中检查（相同输入直接返回）
+    if user_input == self._last_input:
+        return self._last_emotion
+    # 2. 调用 LLM（非流式，temperature=0）→ 只返回标签词
+    # 3. 异常降级为 "neutral"
+```
+
+**情绪 → 调整指令映射**：
+
+| 情绪 | 指令 |
+|------|------|
+| `happy` | 分享快乐，语气轻快活泼 |
+| `sad` | 温柔安慰，多倾听，不急着给建议 |
+| `angry` | 保持冷静同理心，先认同感受 |
+| `anxious` | 安抚鼓励，帮助放松 |
+| `neutral` | 保持一贯温柔风格 |
+
+**设计要点**：
+- 情绪分析用独立 LLM 调用，**不混入对话 LLM 的上下文**，避免 Prompt 污染
+- Prompt 设计极简（要求只返回单词），最小化 token 消耗
+- 带简单缓存：相同输入直接命中，避免重复分析
+
+---
+
+### 3.7 `src/agent/tools.py` — MCP 工具集成
+
+**类**：
+| 类 | 职责 |
+|------|------|
+| `_MCPTool` | 将单个 MCP 工具封装为 LangChain `BaseTool` |
+| `MCPToolManager` | 管理 MCP 服务器连接、工具加载与释放 |
+
+#### MCPToolManager 连接流程
 
 ```
-FastAPI SSE (text/event-stream)
-    │  事件类型：emotion → chunk → chunk → ... → done
-    ▼
-前端 fetch + ReadableStream
-    │  逐 chunk 读取 + 逐字追加渲染
-    ▼
-打字机效果实时展示
+connect()
     │
-    ▼
-流结束后统一处理：
-  • 更新短期记忆（追加 HumanMessage + AIMessage）
-  • 存入 ChromaDB 长期记忆
-  • JSON 文件持久化
+    ├── _build_server_configs()  →  构建服务器列表:
+    │       ├── 高德地图 (amap_maps_api_key 非空即启用)
+    │       ├── Tavily 搜索 (tavily_api_key 非空即启用)
+    │       └── 额外服务器 (mcp_servers_json 文件)
+    │
+    ├── 逐个连接:
+    │       for each config:
+    │           ├── stdio_client(params)       → 启动 npx 子进程
+    │           ├── ClientSession(read, write) → 建立 MCP 会话
+    │           ├── session.initialize()       → 初始化协议
+    │           └── session.list_tools()       → 获取工具列表 → 封装为 _MCPTool
+    │
+    └── 连接失败 → 打印日志 → 跳过该服务器 → 继续下一个
 ```
 
-关键设计：流式输出期间**不更新记忆**（因为回复还没完整生成），而是在流结束后**一次性批量更新**所有记忆状态。这保证了数据的完整性和一致性。
+#### MCP 工具列表
 
-### 2.6 Embedding 适配层设计
+| 服务 | 工具数 | 典型工具 |
+|------|--------|----------|
+| 高德地图 (AMap) | 12 | 地理编码、逆地理编码、天气查询、周边搜索、路线规划、IP 定位等 |
+| Tavily 搜索 | 1 | 联网搜索、新闻检索 |
 
-由于 DeepSeek API 不提供 Embeddings 接口，需要自实现适配层。
+#### 关键设计决策
 
-**方案对比**：
+1. **不依赖 langchain-mcp-adapters**：直接用 MCP SDK（`stdio_client` + `ClientSession`）封装，避免依赖版本冲突
+2. **连接失败不阻塞**：任何一个 MCP 服务器挂了，不影响其他服务器和核心对话
+3. **工具调用跨事件循环处理**：`_MCPTool._run()` 通过 `run_coroutine_threadsafe` 回到原始事件循环，避免 LangChain 同步调用链与 MCP 异步调用链的死锁
+4. **Windows 子进程清理**：`disconnect()` 末尾 `await asyncio.sleep(0.1)` 留给 ProactorEventLoop 处理 npx 管道关闭回调
 
-| 阶段 | 方案 | 优点 | 缺点 |
-|------|------|------|------|
-| 初始 | sentence-transformers 本地模型 (`all-MiniLM-L6-v2`) | 免费、无需联网 | 首次加载慢、占用内存、CPU 推理慢 |
-| 当前 | 阿里云 DashScope `text-embedding-v3` API | 速度快、无本地资源开销 | 需额外 API Key、有网络依赖 |
+#### 添加新 MCP 工具的方法
 
-实现位于 `src/agent/memory.py` 的 `DashScopeEmbeddings` 类：
+1. 在 `.env` 配 API Key（如 `NEW_SERVICE_API_KEY=xxx`）
+2. `settings.py` 加对应字段
+3. `tools.py` → `_build_server_configs()` 中加配置：
 
-- 继承 LangChain 的 `Embeddings` 抽象基类，实现 `embed_documents()` 和 `embed_query()` 两个方法
-- 底层直接调用 DashScope 原生 REST API
-- 区分 `text_type` 参数：存储时使用 `"document"` 类型，检索时使用 `"query"` 类型，获得更精准的语义向量
+```python
+if settings.new_service_api_key:
+    configs["new_service"] = {
+        "command": "npx",
+        "args": ["-y", "package-name"],
+        "env": {"API_KEY": settings.new_service_api_key},
+    }
+```
 
-### 2.7 API 接口设计
+---
+
+### 3.8 `src/ui/server.py` — FastAPI 后端
+
+**职责**：Web 服务器 + API + 生命周期管理
+
+#### 全局单例
+
+```python
+agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
+```
+
+#### 应用生命周期
+
+```
+启动:
+  1. MCPToolManager().connect()  →  连接所有 MCP 服务器
+  2. agent.set_tools(tools)       →  注入工具到 Agent
+
+关闭:
+  1. tool_manager.disconnect()    →  断开 MCP、清理 npx 子进程
+```
+
+#### API 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/` | 返回前端 HTML 页面 |
-| GET | `/api/history` | 获取历史对话 + 当前情绪 |
-| POST | `/api/chat` | 发送消息（SSE 流式回复） |
-| POST | `/api/reset` | 重置当前对话（不删文件） |
-| POST | `/api/clear` | 清除所有数据（对话 + 长期记忆） |
-| GET | `/api/info` | 获取伴侣名称和性格信息 |
+| GET | `/` | 返回前端 HTML |
+| GET | `/api/history` | 历史对话 + 当前情绪 |
+| POST | `/api/chat` | 发送消息，SSE 流式回复 |
+| POST | `/api/reset` | 重置对话（清短期记忆） |
+| POST | `/api/clear` | 清除所有数据 |
+| GET | `/api/emotion` | 当前情绪 |
+| GET | `/api/info` | 伴侣名称和性格 |
+
+#### SSE 流式协议
+
+```
+event: emotion
+data: {"type":"emotion","emotion":"happy"}
+
+event: chunk
+data: {"type":"chunk","content":"今"}
+
+event: chunk
+data: {"type":"chunk","content":"天"}
+
+...
+
+event: done
+data: {"type":"done"}
+```
 
 ---
 
-## 三、挑战点与优化措施
+### 3.9 `src/ui/static/index.html` — 前端页面
 
-### 挑战 1：Embedding 方案选型与演进
+**技术**：原生 HTML/CSS/JS，零框架依赖
 
-**问题**：DeepSeek 不提供 Embedding API，但 ChromaDB 必须依赖向量化才能实现语义检索。
+**核心结构**：
+- `.chat-container` — 主容器（玻璃拟态）
+- `#messages` — 消息列表
+- `#chat-form` — 输入框 + 发送按钮
+- 情绪标签实时展示
+- SSE `ReadableStream` 逐 chunk 渲染 → 打字机效果
 
-**优化措施**：自实现 `DashScopeEmbeddings` 适配层，完全遵循 LangChain `Embeddings` 接口规范（`memory.py` 第 13-42 行），底层调用阿里云 DashScope 原生 API。同时保留了配置切换能力，未来可以无缝切换到其他 Embedding 服务。
-
-```python
-# memory.py 核心设计
-class DashScopeEmbeddings(Embeddings):
-    def embed_documents(self, texts) -> List[List[float]]:
-        return self._call_api(texts, text_type="document")  # 存储用
-
-    def embed_query(self, text) -> List[float]:
-        return self._call_api([text], text_type="query")[0]  # 检索用
-```
-
-### 挑战 2：情绪检测引入额外延迟
-
-**问题**：每次对话需要额外一次 LLM 调用来做情绪分析，串行调用（分析 → 回复）增加了 1-2 秒延迟。
-
-**优化措施**：
-
-- **简单缓存**：`EmotionDetector` 中缓存上一次的输入和检测结果（`emotion.py` 第 60-61 行），相同输入直接命中缓存，避免重复分析。
-- **极简 Prompt**：情绪分析 Prompt 要求只返回单个标签词（"happy/sad/... 不返回其他任何内容"），最小化输出 token 数，加快分析速度。
-- **异常降级**：LLM 调用失败时自动降级为 `neutral`，不阻塞对话流程。
-
-### 挑战 3：短期记忆窗口管理
-
-**问题**：对话轮次增多后，历史消息会快速撑爆 LLM 上下文窗口，导致 Token 超限或 API 成本激增。
-
-**优化措施**：通过 `max_short_term_history` 配置（默认 20 条）实现**滑动窗口裁剪**（`companion.py` 第 117-118 行）：
-
-```python
-if len(self.history) > settings.max_short_term_history:
-    self.history = self.history[-settings.max_short_term_history:]
-```
-
-同时，长期记忆（ChromaDB）承担了更久远信息的存储和语义检索职责，短期记忆只负责维持最近几轮的对话连贯性，两者形成互补。
-
-### 挑战 4：流式输出与记忆更新的时序协调
-
-**问题**：流式输出期间回复还没生成完整，不能更新记忆；但流结束后必须确保所有记忆状态一致更新。
-
-**优化措施**：`chat_stream()` 方法（`companion.py` 第 129-160 行）采用了**"流中缓冲 + 流后统一处理"**模式：
-
-```
-流式阶段:
-  full_response = ""
-  for chunk in chain.stream(...):
-      full_response += chunk.content
-      yield chunk.content       # 实时推送给前端
-                                  # 此阶段不更新任何记忆
-
-流结束后（一次性批量处理）:
-  history.append(HumanMessage)   # 追加用户消息
-  history.append(AIMessage)      # 追加完整回复
-  long_term_memory.add_memory()  # 存入 ChromaDB
-  _save_history()                # JSON 持久化
-```
-
-### 挑战 5：对话持久化方案选择
-
-**问题**：需要在服务重启后恢复对话上下文，但项目没有引入正式数据库。
-
-**优化措施**：采用 **JSON 文件存储**（`companion.py` 第 168-198 行），兼顾简洁性和功能完整性：
-
-- 每次对话结束后立即写盘（`_save_history()`），保证数据不丢失
-- 启动时自动加载（`_load_history()`），恢复上次对话状态
-- 数据格式简洁：`[{"role": "user", "content": "..."}, {"role": "assistant", ...}]`
-- 加载失败时降级为空列表，不影响服务启动
-
-> 💡 **潜在优化方向**：当前方案适合单用户场景。如果需要多用户支持，JSON 文件会面临并发写入和数据隔离问题，届时建议升级到 SQLite 或 PostgreSQL。
-
-### 挑战 6：全局单例 Agent 的并发安全性
-
-**问题**：`server.py` 创建了全局单例 `agent`（`companion.py` 第 24 行），所有请求共享同一个实例，包括同一份 `self.history` 和 `self.current_emotion`。
-
-**现状分析**：对于当前的单用户 Web UI 场景，全局单例是合理的，因为任何时候只有一个用户在使用。但架构上已经预留了扩展能力——`LongTermMemory` 支持 `user_id` 参数，`CompanionAgent` 的模块化设计也便于未来按 session 隔离实例。
+**关键交互**：
+- Enter 发送，Shift+Enter 换行
+- 打字时显示指示器动画（三点跳动）
+- 回复完成后自动滚动到底部
 
 ---
 
-## 四、系统评估与展望
+### 3.10 `src/prompts/companion_prompt.py` — Prompt 模板
 
-### 优势
+提供一个独立函数 `get_companion_prompt()`，但**实际 System Prompt 由 `companion.py:_build_system_prompt()` 内建生成**（含更多动态信息）。此文件保留作为备用/参考。
 
-| 维度 | 评价 |
+---
+
+## 四、端到端数据流（一次完整对话）
+
+```
+┌─ 浏览器 ────────────────────────────────────────────────────────┐
+│  用户输入 "我今天不太开心"                                        │
+│  fetch POST /api/chat  →  SSE 连接                                │
+└──────────────────────┬───────────────────────────────────────────┘
+                       ▼
+┌─ server.py ──────────────────────────────────────────────────────┐
+│  POST /api/chat → agent.chat_stream(user_input)                  │
+│  → 返回 SSE 流：emotion → chunk... → done                        │
+└──────────────────────┬───────────────────────────────────────────┘
+                       ▼
+┌─ companion.py: chat_stream() ────────────────────────────────────┐
+│                                                                  │
+│  ┌── 1. 情绪检测 ──────────────────────────────────────────┐     │
+│  │   emotion.detect("我今天不太开心") → "sad"                │     │
+│  │   → 情绪调整指令："温柔安慰，多倾听，不急着给建议"          │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                  │
+│  ┌── 2. 记忆检索 ──────────────────────────────────────────┐     │
+│  │   短期记忆(self.history)：最近 20 条消息                   │     │
+│  │   长期记忆(memory.retrieve)：ChromaDB 语义检索 k=3 条     │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                  │
+│  ┌── 3. 组装 System Prompt ────────────────────────────────┐     │
+│  │   基础人设 + 情绪指令 + 长期记忆 + 工具列表                 │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                  │
+│  ┌── 4. LLM 生成 ──────────────────────────────────────────┐     │
+│  │   chain.stream() → yield 逐 chunk                        │     │
+│  │   如有 tool_calls → _run_with_tools() → 最多 5 轮        │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                  │
+│  ┌── 5. 记忆更新（流结束后）────────────────────────────────┐     │
+│  │   self.history.append(HumanMessage)                       │     │
+│  │   self.history.append(AIMessage)                          │     │
+│  │   long_term_memory.add_memory(user_input, full_response)  │     │
+│  │   _save_history() → chat_history.json                     │     │
+│  └──────────────────────────────────────────────────────────┘     │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 五、关键设计决策与取舍
+
+### 5.1 双层记忆架构
+
+**为什么两层？** 单靠 LLM 上下文窗口（短期记忆）无法跨会话，"金鱼记忆"问题严重。引入 ChromaDB 长期记忆后，即使重启也能回忆过去。
+
+| | 短期记忆 | 长期记忆 |
+|------|----------|----------|
+| 存储方式 | 内存列表 `self.history` | ChromaDB 向量数据库 |
+| 生命周期 | 服务关闭即丢失 | 持久化到磁盘 |
+| 检索方式 | 全部注入 Prompt（滑动窗口限 20 条） | 语义检索 Top-K（默认 3 条） |
+| 用途 | 维持本轮对话连贯性 | 跨会话记忆重要信息 |
+
+### 5.2 流式输出与记忆更新的时序协调
+
+**核心问题**：流式输出期间回复不完整，不能更新记忆。
+
+**解决**：`chat_stream()` 采用"流中缓冲 + 流后统一处理"：
+- 流式阶段：`full_response += chunk`，只 yield 不写记忆
+- 流结束后：一次性追加 HumanMessage + AIMessage + 写 ChromaDB + JSON 持久化
+
+### 5.3 MCP 工具失败容错
+
+**设计原则**：MCP 工具是增强，不是核心。任何一个挂了不拖累对话。
+
+实现：
+- `connect()` 中逐个 try/except，失败服务器跳过
+- 工具调用失败 → 将错误信息作为 ToolMessage 返回 LLM → LLM 可以降级为纯文本回复
+- 断连时彻底清理所有上下文管理器，避免 npx 子进程泄漏
+
+### 5.4 Embedding 方案演进
+
+| 阶段 | 方案 | 问题 |
+|------|------|------|
+| 初始 | sentence-transformers 本地模型 | 首次加载慢、CPU 推理耗资源 |
+| **当前** | 阿里云 DashScope `text-embedding-v3` | API 调用，速度快、零本地开销 |
+
+`DashScopeEmbeddings` 实现 LangChain `Embeddings` 接口，未来可无缝切换其他 Embedding 服务。
+
+### 5.5 全局单例 Agent
+
+`server.py` 中 `agent` 是全局单例，所有请求共享一份 `self.history` 和 `self.current_emotion`。
+
+**适合当前场景**：单用户 Web UI，一人独用。
+
+**多用户扩展方向**：`LongTermMemory` 已预留 `user_id` 参数，只需将 Agent 实例按 session 隔离即可。
+
+---
+
+## 六、开发与调试指南
+
+### 6.1 首次启动
+
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env，至少填 DEEPSEEK_API_KEY 和 DASHSCOPE_API_KEY
+
+# 3. 启动
+python main.py
+# 访问 http://localhost:8080
+```
+
+### 6.2 运行测试
+
+```bash
+python test_basic.py              # 基础对话
+python test_emotion.py            # 情绪识别
+python test_long_term_memory.py   # 长期记忆存取
+python test_stream.py             # 流式输出
+```
+
+### 6.3 调试技巧
+
+| 场景 | 方法 |
 |------|------|
-| 架构清晰 | 分层明确，模块职责单一，易于理解和维护 |
-| 记忆能力 | 双层记忆设计（短期+长期）是同类项目中的亮点 |
-| 情感交互 | 5 种情绪识别 + 动态语气调整，交互体验有温度 |
-| 自实现适配 | Embedding 适配层展示了良好的接口设计能力 |
-| 零框架前端 | 原生 HTML/CSS/JS，无依赖，加载快 |
-| 测试覆盖 | 4 个独立测试脚本覆盖核心功能 |
+| 看 LLM 实际收到的 Prompt | 在 `_prepare_context` 中 `print(context)` |
+| 看 ChromaDB 存储了什么 | 用 `chromadb` 客户端连 `./data/chroma` 查看 collection |
+| 看 MCP 工具是否加载 | 启动日志搜索 `[MCP]` 前缀的日志 |
+| 看情绪检测结果 | 前端界面情绪标签，或搜索 `agent.current_emotion` |
+| 工具被误调用 | 检查 System Prompt 中工具描述是否过于宽泛 |
+| 对话卡住 | 检查 DeepSeek API 是否欠费 / tool_calls 是否死循环 |
 
-### 可优化方向
+### 6.4 日志说明
 
-1. **情绪检测延迟**：可将情绪分析从串行改为并行（分析 + 回复同时发起），减少用户等待时间；或考虑小模型本地推理
-2. **多用户支持**：引入 session 管理，按 user_id 隔离 Agent 状态
-3. **记忆召回精度**：可在 ChromaDB 中增加更多元数据维度（时间衰减、重要性评分等）
-4. **对话持久化**：JSON 升级为 SQLite，支持并发和更复杂查询
-5. **前端增强**：支持 Markdown 渲染、代码高亮、图片消息等
+| 日志前缀 | 来源 | 含义 |
+|------|------|------|
+| `[MCP]` | `tools.py` | MCP 连接、工具加载、失败跳过 |
+| 情绪标签 | `emotion.py` | 情绪检测结果 |
+| uvicorn 日志 | uvicorn | HTTP 请求记录 |
+
+---
+
+## 七、常见问题排查
+
+### Q1：启动报 `Connection closed` / MCP 工具不工作
+
+**原因**：npx 子进程启动失败（包名错误 / 网络问题 / API Key 缺失）
+
+**排查**：
+1. `npx -y tavily-mcp` 手动测是否能启动
+2. 检查 `.env` 中对应 API Key 是否填写
+3. 不影响核心对话，工具不可用时 LLM 会降级为纯文本回复
+
+### Q2：Ctrl+C 关闭报 `Event loop is closed`
+
+Windows `ProactorEventLoop` 特性。`tools.py` 的 `disconnect()` 已加 `asyncio.sleep(0.1)` 缓解。如仍有此问题，可忽略，不影响功能。
+
+### Q3：长期记忆检索不准确
+
+1. 检查 `DASHSCOPE_API_KEY` 是否有效
+2. 调大 `memory_retrieval_k`（`.env` 中 `MEMORY_RETRIEVAL_K=5`）
+3. 检查 ChromaDB 是否有数据：`data/chroma/` 是否存在
+
+### Q4：回复过长 / 风格偏离人设
+
+修改 `companion.py:_build_system_prompt()` 中的 Prompt 指令，或参考 BRD.md §11.6 的 Prompt 调优维度。
+
+### Q5：流式输出中断 / 无响应
+
+1. 检查 DeepSeek API 额度
+2. 检查 `tool_calls` 是否陷入死循环（日志中看轮次，上限 5 轮）
+3. 检查 `_run_with_tools` 中工具执行是否有异常
+
+### Q6：对话历史丢失
+
+检查 `./data/chat_history.json` 文件权限和 JSON 格式是否损坏。损坏时系统会降级为空列表。
+
+---
+
+## 八、扩展指南
+
+### 8.1 添加新的 API 接口
+
+在 `server.py` 中添加路由函数，参考已有接口。
+
+### 8.2 添加新的 MCP 工具
+
+参考 §3.7 "添加新 MCP 工具的方法"。
+
+### 8.3 调整 Prompt / 人设
+
+修改 `companion.py` 中 `_build_system_prompt()` 方法。
+
+### 8.4 替换 LLM
+
+修改 `settings.py` 的 `model_name` / `base_url`，只要是 OpenAI 兼容 API 即可。`llm.py` 无需改动。
+
+### 8.5 替换 Embedding 服务
+
+在 `memory.py` 中实现新的 `Embeddings` 子类，替换 `DashScopeEmbeddings`。`LongTermMemory` 只依赖 `Embeddings` 接口，不耦合具体服务。
+
+---
+
+## 附录：依赖清单
+
+```
+# requirements.txt 核心依赖
+
+langchain >= 1.0.0          # Agent 框架
+langchain-openai >= 0.3.0   # OpenAI/DeepSeek 接口
+fastapi >= 0.115.0          # Web 框架
+uvicorn >= 0.34.0           # ASGI 服务器
+pydantic-settings >= 2.0    # 配置管理
+chromadb >= 0.5.0           # 向量数据库
+mcp >= 1.0.0                # MCP 协议 SDK
+httpx >= 0.25               # HTTP 客户端（Embedding API 调用）
+```
+
+---
+
+*最后更新：2026-07-09*

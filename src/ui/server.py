@@ -16,14 +16,25 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from src.agent.companion import CompanionAgent
 from src.agent.tools import MCPToolManager
+from src.agent.usage import UsageTracker
 from src.config.settings import settings
 
-# 创建 Agent 实例
+# ========== 全局单例 ==========
 os.makedirs(settings.chroma_persist_dir, exist_ok=True)
-# ========== 全局单例 Agent ==========
-agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
+usage_tracker = UsageTracker(
+    data_file=settings.usage_data_file,
+    budget=settings.daily_budget_limit,
+    input_price=settings.deepseek_input_price,
+    output_price=settings.deepseek_output_price,
+)
+agent = CompanionAgent(
+    use_long_term_memory=True,
+    use_emotion=True,
+    usage_tracker=usage_tracker,
+)
 
 
 @asynccontextmanager
@@ -44,6 +55,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 class ChatRequest(BaseModel):
     message: str
+    location: Optional[dict] = None  # {lat: number, lng: number}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -76,7 +88,7 @@ async def chat(req: ChatRequest):
         yield f"data: {emotion_data}\n\n"
 
         # 流式发送回复
-        for piece in agent.chat_stream(user_input):
+        for piece in agent.chat_stream(user_input, location=req.location):
             chunk_data = json.dumps({
                 "type": "chunk",
                 "content": piece,
@@ -107,6 +119,11 @@ async def clear_all():
     """清除所有数据"""
     agent.clear_all_data()
     return JSONResponse({"status": "ok", "message": "所有数据已清除"})
+
+@app.get("/api/usage")
+async def get_usage():
+    """获取今日用量统计"""
+    return JSONResponse(usage_tracker.get_stats())
 
 @app.get("/api/info")
 async def info():

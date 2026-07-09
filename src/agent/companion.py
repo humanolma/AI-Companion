@@ -9,22 +9,29 @@ CompanionAgent — 虚拟伴侣 Agent 主类
 """
 import json
 import os
+import logging
+import httpx
 from typing import List, Optional, Generator
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.agent.llm import get_llm
 from src.agent.emotion import EmotionDetector
+from src.agent.usage import estimate_tokens
 from src.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 class CompanionAgent:
     """虚拟伴侣 Agent 主类"""
 
-    def __init__(self, use_long_term_memory: bool = False, use_emotion: bool = True, tools: list = None):
+    def __init__(self, use_long_term_memory: bool = False, use_emotion: bool = True,
+                 tools: list = None, usage_tracker=None):
         """
         初始化 Agent
         :param use_long_term_memory: 是否启用长期记忆（ChromaDB）
         :param use_emotion: 是否启用情感感知
         :param tools: MCP 工具列表（可后续通过 set_tools 注入）
+        :param usage_tracker: UsageTracker 实例（可选，用于用量监控）
         """
         self.llm = get_llm()
         self.system_prompt_template = self._build_system_prompt()
@@ -33,6 +40,9 @@ class CompanionAgent:
 
         # MCP 工具（运行时可由 server lifespan 注入）
         self._bind_tools(tools)
+
+        # 用量追踪（可选）
+        self.usage_tracker = usage_tracker
 
         # 短期记忆（对话上下文）
         self.history: List = []
@@ -46,7 +56,7 @@ class CompanionAgent:
 
         # 情感感知（可选）
         self.use_emotion = use_emotion
-        self.emotion_detector = EmotionDetector() if use_emotion else None
+        self.emotion_detector = EmotionDetector(usage_tracker=usage_tracker) if use_emotion else None
         # 记录最近一次检测到的情绪
         self.current_emotion: str = "neutral"
 
@@ -96,9 +106,18 @@ class CompanionAgent:
         messages.append(HumanMessage(content=user_input))
         return messages
 
-    def _run_with_tools(self, messages: list) -> str:
-        """带工具调用的 LLM 调用：自动执行工具直到无 tool_calls，返回最终文本"""
+    def _run_with_tools(self, messages: list) -> tuple:
+        """带工具调用的 LLM 调用：自动执行工具直到无 tool_calls。
+        :return: (最终文本, 累计输入tokens, 累计输出tokens)
+        """
+        tokens_in = 0
+        tokens_out = 0
+        # 估算首轮输入
+        tokens_in += estimate_tokens("".join(m.content for m in messages))
         response = self.llm_with_tools.invoke(messages)
+        tokens_out += estimate_tokens(str(response.content))
+        if response.tool_calls:
+            tokens_out += estimate_tokens(str(response.tool_calls))
         iterations = 0
         while response.tool_calls and iterations < 5:
             messages.append(response)
@@ -112,9 +131,16 @@ class CompanionAgent:
                 else:
                     result = f"未找到工具：{tc['name']}"
                 messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            # 估算后续轮次输入（含工具结果）
+            tokens_in += estimate_tokens("".join(
+                m.content for m in messages[-(1 + len(response.tool_calls)):]
+            ))
             response = self.llm_with_tools.invoke(messages)
+            tokens_out += estimate_tokens(str(response.content))
+            if response.tool_calls:
+                tokens_out += estimate_tokens(str(response.tool_calls))
             iterations += 1
-        return response.content
+        return response.content, tokens_in, tokens_out
 
     def _format_long_term_context(self, memories: List[str]) -> str:
         """将检索到的长期记忆格式化为文本"""
@@ -122,7 +148,29 @@ class CompanionAgent:
             return ""
         return "\n【长期记忆】以下是你之前和用户的对话片段，请参考：\n" + "\n---\n".join(memories)
 
-    def _prepare_context(self, user_input: str) -> str:
+    def _reverse_geocode(self, location: dict) -> Optional[str]:
+        """用 AMap REST API 逆地理编码，返回城市名（同步 HTTP，不依赖 MCP）"""
+        try:
+            lng = location.get("lng") or location.get("longitude")
+            lat = location.get("lat") or location.get("latitude")
+            if not lng or not lat:
+                return None
+            resp = httpx.get("https://restapi.amap.com/v3/geocode/regeo", params={
+                "location": f"{lng},{lat}",
+                "key": settings.amap_maps_api_key,
+                "extensions": "base",
+            }, timeout=5.0)
+            data = resp.json()
+            if data.get("status") == "1":
+                regeo = data.get("regeocode", {})
+                addr = regeo.get("addressComponent", {})
+                city = addr.get("city") or addr.get("province")
+                return city if city else None
+        except Exception:
+            pass
+        return None
+
+    def _prepare_context(self, user_input: str, location: dict = None) -> str:
         """组装系统消息（情绪调整 + 长期记忆），供 chat 和 chat_stream 复用"""
         # 情感感知
         emotion_adjustment = ""
@@ -145,19 +193,27 @@ class CompanionAgent:
                 "当用户需求涉及这些工具的能力（如查地点、路线、周边搜索等）时，主动调用它们，"
                 "并把结果自然地融入你的回复中。"
             )
+        # 位置感知：逆地理编码获取城市名，注入 System Prompt
+        if location and settings.amap_maps_api_key:
+            city = self._reverse_geocode(location)
+            if city:
+                system_message += (
+                    f"\n\n【位置感知】用户当前所在城市：{city}。"
+                    "当用户询问天气、周边、路线等与位置相关的问题时，优先使用这个城市作为默认位置，无需再问用户在哪。"
+                )
         return system_message
 
-    def chat(self, user_input: str) -> str:
+    def chat(self, user_input: str, location: dict = None) -> str:
         """与用户对话（一次性返回完整回复）"""
         if not user_input:
             return ""
 
-        system_message = self._prepare_context(user_input)
+        system_message = self._prepare_context(user_input, location=location)
 
         # 调用 LLM（有工具时走工具调用循环）
         if self.tools:
             messages = self._build_messages(system_message, user_input)
-            response_text = self._run_with_tools(messages)
+            response_text, _, _ = self._run_with_tools(messages)
         else:
             response = self.chain.invoke({
                 "system_message": system_message,
@@ -181,20 +237,35 @@ class CompanionAgent:
 
         return response_text
 
-    def chat_stream(self, user_input: str) -> Generator[str, None, None]:
+    def _estimate_input_tokens(self, system_message: str, user_input: str) -> int:
+        """估算本次 LLM 调用的输入 token 数"""
+        history_text = "".join(m.content for m in self.history)
+        return estimate_tokens(system_message + history_text + user_input)
+
+    def chat_stream(self, user_input: str, location: dict = None) -> Generator[str, None, None]:
         """
         流式对话（逐字 yield 回复内容，打字机效果）
+        :param location: 可选，前端传来的 GPS 坐标 {lat, lng}
         :yield: 每次返回一个文本片段
         """
         if not user_input:
             return
 
-        system_message = self._prepare_context(user_input)
+        system_message = self._prepare_context(user_input, location=location)
+
+        # 预算检查
+        if self.usage_tracker and not self.usage_tracker.check_budget():
+            yield "⚠️ 今日用量已达预算上限，请明天再试或调整预算设置。"
+            return
+
+        tokens_in = self._estimate_input_tokens(system_message, user_input)
 
         # 有工具时：先同步完成工具调用（含多轮），再一次性返回最终回复
         if self.tools:
             messages = self._build_messages(system_message, user_input)
-            full_response = self._run_with_tools(messages)
+            full_response, tool_tokens_in, tool_tokens_out = self._run_with_tools(messages)
+            tokens_in += tool_tokens_in
+            tokens_out = tool_tokens_out
             yield full_response
         else:
             # 流式调用 LLM，逐 chunk 拼接
@@ -207,6 +278,12 @@ class CompanionAgent:
                 piece = chunk.content
                 full_response += piece
                 yield piece
+            tokens_out = estimate_tokens(full_response)
+
+        # 记录用量
+        if self.usage_tracker:
+            self.usage_tracker.record(tokens_in, tokens_out)
+            logger.debug("用量: +%d in / +%d out tokens", tokens_in, tokens_out)
 
         # 流结束后更新记忆
         self.history.append(HumanMessage(content=user_input))
