@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     dashscope_api_key: str = ""
+    amap_maps_api_key: str = ""  # 高德地图 API Key（用于 MCP 地图工具）
+    tavily_api_key: str = ""  # Tavily Search API Key（用于 MCP 联网搜索）
     
     # === 模型配置 ===
     model_name: str = "deepseek-v4-flash"
@@ -28,6 +30,11 @@ class Settings(BaseSettings):
 
     # === 对话持久化 ===
     chat_history_file: str = "./data/chat_history.json"  # 对话记录保存路径
+    
+    # === MCP 工具配置 ===
+    # 高德地图 MCP 由 amap_maps_api_key（系统环境变量）自动启用
+    # 额外 MCP 服务器可在此 JSON 文件中配置（与 langchain-mcp-adapters 格式一致）
+    mcp_servers_json: str = "./data/mcp_servers.json"
     
     # === 伴侣人设 ===
     companion_name: str = "小梦"

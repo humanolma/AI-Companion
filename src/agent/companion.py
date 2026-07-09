@@ -10,7 +10,7 @@ CompanionAgent — 虚拟伴侣 Agent 主类
 import json
 import os
 from typing import List, Optional, Generator
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.agent.llm import get_llm
 from src.agent.emotion import EmotionDetector
@@ -19,16 +19,20 @@ from src.config.settings import settings
 class CompanionAgent:
     """虚拟伴侣 Agent 主类"""
 
-    def __init__(self, use_long_term_memory: bool = False, use_emotion: bool = True):
+    def __init__(self, use_long_term_memory: bool = False, use_emotion: bool = True, tools: list = None):
         """
         初始化 Agent
         :param use_long_term_memory: 是否启用长期记忆（ChromaDB）
         :param use_emotion: 是否启用情感感知
+        :param tools: MCP 工具列表（可后续通过 set_tools 注入）
         """
         self.llm = get_llm()
         self.system_prompt_template = self._build_system_prompt()
         self.prompt = self._build_prompt()
         self.chain = self.prompt | self.llm
+
+        # MCP 工具（运行时可由 server lifespan 注入）
+        self._bind_tools(tools)
 
         # 短期记忆（对话上下文）
         self.history: List = []
@@ -67,12 +71,50 @@ class CompanionAgent:
         return base
 
     def _build_prompt(self) -> ChatPromptTemplate:
-        """构建 Prompt 模板（LangChain 格式）"""
+        """构建 Prompt 模板（LangChain 格式）—— 用于无工具的简单链路"""
         return ChatPromptTemplate.from_messages([
             ("system", "{system_message}"),
             MessagesPlaceholder(variable_name="history"),
             ("human", "{input}"),
         ])
+
+    def _bind_tools(self, tools):
+        """绑定 MCP 工具到 LLM（支持运行时重复注入）"""
+        self.tools = list(tools) if tools else []
+        self.tools_by_name = {t.name: t for t in self.tools}
+        # bind_tools 让 LLM 在回复中返回 tool_calls；无工具时退化为普通 LLM
+        self.llm_with_tools = self.llm.bind_tools(self.tools) if self.tools else self.llm
+
+    def set_tools(self, tools):
+        """运行时注入工具（由 server 的 lifespan 调用）"""
+        self._bind_tools(tools)
+
+    def _build_messages(self, system_message: str, user_input: str) -> list:
+        """组装发送给 LLM 的消息列表（系统提示 + 历史 + 当前输入）"""
+        messages = [SystemMessage(content=system_message)]
+        messages.extend(self.history)  # 历史已是 HumanMessage / AIMessage 列表
+        messages.append(HumanMessage(content=user_input))
+        return messages
+
+    def _run_with_tools(self, messages: list) -> str:
+        """带工具调用的 LLM 调用：自动执行工具直到无 tool_calls，返回最终文本"""
+        response = self.llm_with_tools.invoke(messages)
+        iterations = 0
+        while response.tool_calls and iterations < 5:
+            messages.append(response)
+            for tc in response.tool_calls:
+                tool = self.tools_by_name.get(tc["name"])
+                if tool:
+                    try:
+                        result = tool.invoke(tc["args"])
+                    except Exception as e:
+                        result = f"工具执行失败：{e}"
+                else:
+                    result = f"未找到工具：{tc['name']}"
+                messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            response = self.llm_with_tools.invoke(messages)
+            iterations += 1
+        return response.content
 
     def _format_long_term_context(self, memories: List[str]) -> str:
         """将检索到的长期记忆格式化为文本"""
@@ -95,6 +137,14 @@ class CompanionAgent:
             memories = self.long_term_memory.retrieve_memories(user_input)
             if memories:
                 system_message += "\n" + self._format_long_term_context(memories)
+        # 工具感知：明确告知可用工具，提升主动调用概率
+        if self.tools:
+            names = "、".join(getattr(t, "name", str(t)) for t in self.tools)
+            system_message += (
+                f"\n\n【可用工具】你拥有以下工具来更好地帮助用户：{names}。"
+                "当用户需求涉及这些工具的能力（如查地点、路线、周边搜索等）时，主动调用它们，"
+                "并把结果自然地融入你的回复中。"
+            )
         return system_message
 
     def chat(self, user_input: str) -> str:
@@ -104,27 +154,32 @@ class CompanionAgent:
 
         system_message = self._prepare_context(user_input)
 
-        # 调用 LLM
-        response = self.chain.invoke({
-            "system_message": system_message,
-            "history": self.history,
-            "input": user_input,
-        })
+        # 调用 LLM（有工具时走工具调用循环）
+        if self.tools:
+            messages = self._build_messages(system_message, user_input)
+            response_text = self._run_with_tools(messages)
+        else:
+            response = self.chain.invoke({
+                "system_message": system_message,
+                "history": self.history,
+                "input": user_input,
+            })
+            response_text = response.content
 
         # 更新短期记忆
         self.history.append(HumanMessage(content=user_input))
-        self.history.append(AIMessage(content=response.content))
+        self.history.append(AIMessage(content=response_text))
         if len(self.history) > settings.max_short_term_history:
             self.history = self.history[-settings.max_short_term_history:]
 
         # 存储长期记忆
         if self.use_long_term_memory and self.long_term_memory:
-            self.long_term_memory.add_memory(user_input, response.content)
+            self.long_term_memory.add_memory(user_input, response_text)
 
         # 持久化对话历史
         self._save_history()
 
-        return response.content
+        return response_text
 
     def chat_stream(self, user_input: str) -> Generator[str, None, None]:
         """
@@ -136,16 +191,22 @@ class CompanionAgent:
 
         system_message = self._prepare_context(user_input)
 
-        # 流式调用 LLM，逐 chunk 拼接
-        full_response = ""
-        for chunk in self.chain.stream({
-            "system_message": system_message,
-            "history": self.history,
-            "input": user_input,
-        }):
-            piece = chunk.content
-            full_response += piece
-            yield piece
+        # 有工具时：先同步完成工具调用（含多轮），再一次性返回最终回复
+        if self.tools:
+            messages = self._build_messages(system_message, user_input)
+            full_response = self._run_with_tools(messages)
+            yield full_response
+        else:
+            # 流式调用 LLM，逐 chunk 拼接
+            full_response = ""
+            for chunk in self.chain.stream({
+                "system_message": system_message,
+                "history": self.history,
+                "input": user_input,
+            }):
+                piece = chunk.content
+                full_response += piece
+                yield piece
 
         # 流结束后更新记忆
         self.history.append(HumanMessage(content=user_input))

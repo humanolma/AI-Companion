@@ -11,11 +11,13 @@ FastAPI 后端 — 提供 REST API + SSE 流式接口
 """
 import json
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from src.agent.companion import CompanionAgent
+from src.agent.tools import MCPToolManager
 from src.config.settings import settings
 
 # 创建 Agent 实例
@@ -24,7 +26,17 @@ os.makedirs(settings.chroma_persist_dir, exist_ok=True)
 agent = CompanionAgent(use_long_term_memory=True, use_emotion=True)
 
 
-app = FastAPI(title="AI Virtual Companion")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时连接 MCP 工具并注入 Agent，关闭时释放"""
+    tool_manager = MCPToolManager()
+    await tool_manager.connect()
+    agent.set_tools(tool_manager.get_tools())
+    yield
+    await tool_manager.disconnect()
+
+
+app = FastAPI(title="AI Virtual Companion", lifespan=lifespan)
 
 # 静态文件目录
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
