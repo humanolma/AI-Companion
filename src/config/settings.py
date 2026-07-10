@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # === 对话持久化 ===
     chat_history_file: str = "./data/chat_history.json"  # 对话记录保存路径
+    user_profile_file: str = "./data/user_profile.json"  # 用户画像
     
     # === MCP 工具配置 ===
     # 高德地图 MCP 由 amap_maps_api_key（系统环境变量）自动启用

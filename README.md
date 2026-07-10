@@ -1,39 +1,59 @@
 # AI 虚拟伴侣 / AI Virtual Companion
 
-一个基于 LangChain + DeepSeek 的 AI 虚拟伴侣，有记忆、有情感、会聊天。
+一个有记忆、有情感、有能力的个人 AI 助手。基于 LangChain + DeepSeek，支持 MCP 工具集成、位置感知、用量监控。
+
+**当前版本：v0.3**
 
 ## ✨ 功能特点
 
-- 🧠 **记忆系统**：短期对话上下文 + ChromaDB 长期记忆，跨会话也能记住你说过的话
-- 🎭 **角色人设**：可自定义伴侣的性格、背景故事、说话风格
-- 💖 **情感感知**：识别用户情绪（开心/低落/生气/焦虑/平静），动态调整回复语气
-- ⌨️ **流式输出**：SSE 流式推送，打字机效果实时反馈
-- 🎨 **自研 Web UI**：FastAPI 后端 + 原生 HTML/CSS/JS 前端，玻璃拟态设计
-- 💾 **对话持久化**：JSON 本地存储，重启不丢失对话记录
+### 核心能力
+- 🧠 **双层记忆**：短期对话上下文（滑动窗口）+ ChromaDB 长期记忆（语义检索），跨会话记住重要信息
+- 🎭 **可自定义人设**：名字、性格、背景故事，通过 `.env` 自由配置
+- 💖 **情感感知**：5 种情绪识别（开心/低落/生气/焦虑/平静），动态调整回复语气，前端实时显示
+- ⌨️ **流式输出**：SSE 打字机效果，支持 Markdown 渲染（marked.js + highlight.js 语法高亮）
+- 🎨 **现代 Web UI**：玻璃拟态设计，原生 HTML/CSS/JS，零框架依赖
+
+### 工具与感知
+- 🗺️ **MCP 工具集成**：高德地图（天气/路线/周边搜索 12 个工具）+ Tavily 联网搜索
+- 📍 **位置感知**：浏览器 GPS → 高德逆地理编码 → 自动注入城市，"今天天气怎么样"无需指定城市
+- 🔥 **用量监控**：Token 估算 + 费用统计，前端实时显示，支持每日预算上限
+
+### 工程化
+- 📝 **结构化日志**：`logging` + 按天切割 + 7 天保留
+- ⌨️ **键盘快捷键**：Enter 发送、Shift+Enter 换行、Ctrl+L 清空输入
 
 ## 📦 安装
 
-1. 克隆仓库
-```bash
-git clone https://github.com/yourusername/ai-companion.git
-cd ai-companion
-```
+### 1. 环境准备
 
-2. 创建 conda 环境
 ```bash
 conda create -n ai-companion python=3.10
 conda activate ai-companion
 ```
 
-3. 安装依赖
+### 2. 安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
-4. 配置环境变量
+### 3. 配置 API Key
+
 ```bash
 cp .env.example .env
-# 编辑 .env，填入你的 DeepSeek API Key
+```
+
+编辑 `.env`，至少配置：
+
+```ini
+# 必填
+DEEPSEEK_API_KEY=sk-xxx          # LLM（DeepSeek）
+DASHSCOPE_API_KEY=sk-xxx         # Embedding（阿里云 DashScope）
+
+# 可选（不填则对应功能自动禁用）
+AMAP_MAPS_API_KEY=xxx            # 高德地图工具
+TAVILY_API_KEY=tvly-xxx          # 联网搜索
+DAILY_BUDGET_LIMIT=0             # 每日预算上限（元），0=不限
 ```
 
 ## 🚀 运行
@@ -42,85 +62,130 @@ cp .env.example .env
 python main.py
 ```
 
-然后在浏览器打开 `http://127.0.0.1:8000`
+浏览器打开 `http://127.0.0.1:8080`
 
-## ⚙️ 配置
+## ⚙️ 主要配置
 
-编辑 `.env` 文件自定义：
-- `DEEPSEEK_API_KEY`：DeepSeek API 密钥
-- `COMPANION_NAME`：伴侣名字（默认：小梦）
-- `COMPANION_PERSONALITY`：性格特点（默认：温柔、善解人意、有点俏皮）
-- `COMPANION_BACKSTORY`：背景故事
-- `MODEL_NAME`：使用的模型（默认：deepseek-chat）
-- `TEMPERATURE`：温度参数（0-1，越大越有创意）
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `COMPANION_NAME` | 小梦 | 伴侣名字 |
+| `COMPANION_PERSONALITY` | 温柔、善解人意、有点俏皮 | 性格描述 |
+| `COMPANION_BACKSTORY` | （空） | 背景故事 |
+| `MODEL_NAME` | deepseek-v4-flash | LLM 模型 |
+| `TEMPERATURE` | 0.7 | 生成温度 |
+| `MEMORY_RETRIEVAL_K` | 3 | 长期记忆每次检索条数 |
+| `MAX_SHORT_TERM_HISTORY` | 20 | 短期记忆最大条数 |
+| `DAILY_BUDGET_LIMIT` | 0 | 每日费用上限（元） |
+| `DEEPSEEK_INPUT_PRICE` | 0.55 | 输入价格（元/百万 tokens） |
+| `DEEPSEEK_OUTPUT_PRICE` | 2.19 | 输出价格（元/百万 tokens） |
 
 ## 🏗️ 项目结构
 
 ```
-ai-companion/
-├── main.py                    # 入口文件（uvicorn 启动 FastAPI）
+AI-Companion/
+├── main.py                         # [入口] uvicorn 启动
 ├── requirements.txt
 ├── .env.example
+│
+├── BRD.md                          # 业务需求说明书
+├── DESIGN.md                       # 技术设计文档
+├── README.md
+│
 ├── src/
 │   ├── config/
-│   │   └── settings.py        # Pydantic Settings 配置管理
-│   ├── agent/
-│   │   ├── llm.py             # LLM 初始化（DeepSeek / OpenAI 兼容）
-│   │   ├── companion.py       # 虚拟伴侣 Agent 主类
-│   │   ├── memory.py          # 长期记忆（ChromaDB + 本地 Embedding）
-│   │   └── emotion.py         # 情感感知模块
-│   ├── prompts/
-│   │   └── companion_prompt.py # Prompt 模板
-│   └── ui/
-│       ├── server.py          # FastAPI 后端（REST + SSE）
+│   │   └── settings.py             # Pydantic Settings 配置管理
+│   │
+│   ├── agent/                      # [核心] Agent 层
+│   │   ├── companion.py            # CompanionAgent 主类：对话编排
+│   │   ├── llm.py                  # LLM 初始化（DeepSeek / OpenAI 兼容）
+│   │   ├── memory.py               # 长期记忆（ChromaDB + DashScope Embedding）
+│   │   ├── emotion.py              # 情感感知（LLM 情绪分析）
+│   │   ├── tools.py                # MCP 工具管理（高德 + Tavily）
+│   │   └── usage.py                # 用量追踪（Token 估算 + 费用统计）
+│   │
+│   ├── utils/
+│   │   └── logger.py               # 统一日志配置（按天切割）
+│   │
+│   └── ui/                         # [前端] Web 交互层
+│       ├── server.py               # FastAPI（REST + SSE）
 │       └── static/
-│           ├── index.html     # 前端页面（玻璃拟态设计）
-│           └── avatar.jpg     # 伴侣头像
-├── test_basic.py              # 基础对话测试
-├── test_long_term_memory.py   # 长期记忆测试
-├── test_emotion.py            # 情感感知测试
-└── test_stream.py             # 流式输出测试
+│           ├── index.html          # 前端页面（玻璃拟态 UI）
+│           └── avatar.jpg          # 头像
+│
+├── assets/
+│   └── companion_avatar.svg
+│
+├── data/                           # 运行时数据（.gitignore）
+│   ├── chat_history.json           # 对话持久化
+│   ├── usage.json                  # 用量统计
+│   ├── mcp_servers.json            # 额外 MCP 配置
+│   ├── chroma/                     # ChromaDB 向量数据库
+│   └── logs/                       # 日志文件（按天切割）
+│
+├── test_basic.py
+├── test_emotion.py
+├── test_long_term_memory.py
+└── test_stream.py
 ```
 
 ## 🛠️ 技术栈
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| LLM | DeepSeek API | OpenAI 兼容接口，成本低 |
-| Agent 框架 | LangChain 1.x | Prompt 模板、链式调用、流式输出 |
-| 长期记忆 | ChromaDB | 向量数据库，语义检索历史对话 |
-| Embedding | sentence-transformers | 本地模型 all-MiniLM-L6-v2，无需额外 API |
-| 后端 | FastAPI | REST API + SSE 流式接口 |
-| 前端 | 原生 HTML/CSS/JS | 玻璃拟态 UI，无框架依赖 |
-| 配置管理 | pydantic-settings | 类型安全的环境变量管理 |
+| LLM | DeepSeek API（deepseek-v4-flash）| OpenAI 兼容，性价比高 |
+| Agent | LangChain 1.x + MCP SDK | Prompt 模板、流式输出、工具调用循环 |
+| 长期记忆 | ChromaDB | 向量数据库，语义检索 |
+| Embedding | 阿里云 DashScope text-embedding-v3 | 云端推理，零本地开销 |
+| MCP 工具 | 高德地图 + Tavily 搜索 | npx 子进程，连接失败自动降级 |
+| 后端 | FastAPI | REST API + SSE 流式 |
+| 前端 | 原生 HTML/CSS/JS + marked.js + highlight.js | 玻璃拟态、Markdown 渲染、GPS 定位 |
+| 日志 | logging + TimedRotatingFileHandler | 按天切割，7 天保留 |
+| 配置 | pydantic-settings | `.env` 环境变量管理 |
 
 ## 🧪 测试
 
 ```bash
-# 基础对话测试
-python test_basic.py
-
-# 长期记忆测试（跨会话记忆检索）
-python test_long_term_memory.py
-
-# 情感感知测试（5 种情绪检测）
-python test_emotion.py
-
-# 流式输出测试（打字机效果）
-python test_stream.py
+python test_basic.py               # 基础对话
+python test_long_term_memory.py    # 长期记忆存取
+python test_emotion.py             # 情绪识别
+python test_stream.py              # 流式输出
 ```
 
-## 📐 架构亮点
+## 📐 架构设计
 
-**记忆系统双层架构**：
-- **短期记忆**：LangChain MessagesPlaceholder，保留最近 N 轮对话上下文
-- **长期记忆**：ChromaDB 向量数据库，每次对话自动存储 + 语义检索相关历史
+### 数据流
 
-**情感感知闭环**：
-用户输入 → LLM 情绪分析 → 识别 5 种情绪 → 动态注入情绪调整指令到 System Prompt → 生成匹配语气的回复
+```
+浏览器（GPS位置 + 消息）
+  → FastAPI SSE
+  → EmotionDetector（情绪分析）
+  → LongTermMemory（语义检索）
+  → System Prompt 组装（人设 + 情绪 + 记忆 + 位置 + 日期 + 工具列表）
+  → LLM 生成（可选 MCP 工具调用循环）
+  → UsageTracker（记录用量）
+  → SSE 流式推送 + Markdown 渲染
+  → 更新记忆 + 持久化
+```
 
-**自实现 Embedding 适配层**：
-DeepSeek 不提供 Embeddings API，自实现 `LocalEmbeddings` 类继承 LangChain 接口，包装 sentence-transformers 本地模型，无缝接入 ChromaDB。
+### 关键设计决策
+
+- **双层记忆**：短期（内存列表 20 条）+ 长期（ChromaDB 语义检索 3 条）
+- **MCP 失败容错**：工具是增强不是必须，任何一个挂掉不拖累对话
+- **逆地理编码走 REST**：不用 MCP 工具链，避免异步复杂度
+- **Token 字符估算**：不依赖 API 返回（流式无此字段），中文/1.5 + 英文/3.5
+- **System Prompt 多源注入**：情绪调整 + 长期记忆 + 位置城市 + 工具列表 → 运行时分段拼接
+
+## 🗺️ 版本规划
+
+| 版本 | 状态 | 范围 |
+|------|------|------|
+| **v0.1** | ✅ | Phase 1：核心对话引擎（LLM/Memory/Emotion/SSE/UI） |
+| **v0.2** | ✅ | Markdown 渲染、位置感知、日志系统、快捷键、用量监控 |
+| **v0.3** | ✅ | 日期感知（MCP time）、对话导出、历史搜索、用户画像 |
+| **v0.4** | 🚧 | 日程创建、语音输入/合成、文档上传、人设预设 |
+| **v1.0** | 🚧 | Phase 2-6 全部完成 |
+
+详见 [BRD.md](BRD.md) 和 [DESIGN.md](DESIGN.md)。
 
 ## 📄 许可证
 

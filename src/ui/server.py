@@ -11,9 +11,10 @@ FastAPI 后端 — 提供 REST API + SSE 流式接口
 """
 import json
 import os
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -120,10 +121,85 @@ async def clear_all():
     agent.clear_all_data()
     return JSONResponse({"status": "ok", "message": "所有数据已清除"})
 
+@app.get("/api/export")
+async def export_chat(format: str = "markdown"):
+    """导出对话历史（Markdown 或 JSON）"""
+    history = agent.get_history_display()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    if format == "json":
+        return JSONResponse({
+            "exported_at": now,
+            "companion": settings.companion_name,
+            "messages": history,
+        })
+
+    # Markdown 格式
+    lines = [
+        f"# {settings.companion_name} · 对话记录",
+        f"> 导出时间：{now}",
+        "",
+        "---",
+        "",
+    ]
+    for msg in history:
+        role_label = "## 我" if msg["role"] == "user" else f"## {settings.companion_name}"
+        lines.append(role_label)
+        lines.append("")
+        lines.append(msg["content"])
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+    md_content = "\n".join(lines)
+
+    return Response(
+        content=md_content.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="companion_chat_{now[:10]}.md"',
+        },
+    )
+
+@app.get("/api/search")
+async def search_chat(q: str = ""):
+    """搜索对话历史，返回匹配的消息列表"""
+    keyword = q.strip()
+    if not keyword:
+        return JSONResponse({"results": [], "total": 0})
+
+    history = agent.get_history_display()
+    results = []
+    for i, msg in enumerate(history):
+        if keyword.lower() in msg["content"].lower():
+            # 截取关键词前后 40 字作为预览
+            idx = msg["content"].lower().index(keyword.lower())
+            start = max(0, idx - 40)
+            end = min(len(msg["content"]), idx + len(keyword) + 40)
+            preview = msg["content"][start:end]
+            if start > 0:
+                preview = "…" + preview
+            if end < len(msg["content"]):
+                preview = preview + "…"
+
+            results.append({
+                "index": i,
+                "role": msg["role"],
+                "preview": preview,
+                "full_content": msg["content"],
+                "keyword": keyword,
+            })
+
+    return JSONResponse({"results": results, "total": len(results)})
+
 @app.get("/api/usage")
 async def get_usage():
     """获取今日用量统计"""
     return JSONResponse(usage_tracker.get_stats())
+
+@app.get("/api/profile")
+async def get_profile():
+    """获取用户画像"""
+    return JSONResponse(agent.user_profile.get_profile())
 
 @app.get("/api/info")
 async def info():

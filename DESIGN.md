@@ -48,27 +48,32 @@ AI-Companion/
 │
 ├── data/                            # 运行时数据（.gitignore）
 │   ├── chat_history.json            # 对话历史持久化文件
+│   ├── user_profile.json            # 用户画像（自动提取）
+│   ├── usage.json                   # 用量统计（每日 Token + 费用）
 │   ├── mcp_servers.json             # 额外 MCP 服务器配置（可选）
-│   └── chroma/                      # ChromaDB 向量数据库目录
+│   ├── chroma/                      # ChromaDB 向量数据库目录
+│   └── logs/                        # 日志文件（按天切割，保留 30 天）
 │
 └── src/
     ├── config/
     │   └── settings.py              # [配置] Pydantic Settings，所有环境变量
     │
-    ├── agent/                       # [核心] Agent 层 — 整个系统的大脑
+    ├── agent/                       # [核心] Agent 层
     │   ├── companion.py             # CompanionAgent 主类：对话编排、记忆管理
     │   ├── llm.py                   # LLM 初始化：ChatOpenAI 封装 DeepSeek
     │   ├── memory.py                # 长期记忆：ChromaDB + DashScope Embedding
     │   ├── emotion.py               # 情感感知：LLM 情绪分析 + 自适应回复
-    │   └── tools.py                 # MCP 工具：高德地图 + Tavily 搜索 + 扩展
+    │   ├── tools.py                 # MCP 工具：高德 + Tavily + 时间
+    │   ├── usage.py                 # 用量追踪：Token 估算 + 费用统计
+    │   └── profile.py               # 用户画像：自动提取 + 结构化存储
     │
-    ├── prompts/
-    │   └── companion_prompt.py      # Prompt 模板（独立版，实际已内建到 companion.py）
+    ├── utils/
+    │   └── logger.py                # 统一日志配置（TimedRotatingFileHandler）
     │
     └── ui/                          # [前端] Web 交互层
-        ├── server.py                # FastAPI 应用：REST API + SSE + 生命周期管理
+        ├── server.py                # FastAPI：REST + SSE + 生命周期 + 导出/搜索
         └── static/
-            ├── index.html           # 前端页面：玻璃拟态 UI，零框架依赖
+            ├── index.html           # 前端页面：玻璃拟态 UI + Markdown + 搜索
             └── avatar.jpg           # 头像图片
 ```
 
@@ -625,6 +630,24 @@ Windows `ProactorEventLoop` 特性。`tools.py` 的 `disconnect()` 已加 `async
 ### 8.5 替换 Embedding 服务
 
 在 `memory.py` 中实现新的 `Embeddings` 子类，替换 `DashScopeEmbeddings`。`LongTermMemory` 只依赖 `Embeddings` 接口，不耦合具体服务。
+
+---
+
+## 九、技术债务与重构计划
+
+> 以下问题当前影响不大，但规模增长后需处理。记录于此避免遗忘。
+
+| 编号 | 问题 | 当前状态 | 触发条件 | 计划方案 |
+|------|------|----------|----------|----------|
+| TD-001 | `companion.py` 单一类承载过重 | 🟢 525 行可接受 | 超过 800 行 | 拆分为 `SystemPromptBuilder` + `HistoryManager` + `ToolCallRunner` |
+| TD-002 | `server.py` 所有 API 混合在一起 | 🟢 165 行可接受 | API 超过 10 个 | 拆分为 `src/ui/routes/` 独立路由文件 |
+| TD-003 | 前端 `index.html` 单文件 HTML/CSS/JS | 🟢 可维护 | 超过 1200 行或引入新交互组件 | 上构建工具（Vite），拆 JS/CSS 为独立文件 |
+| TD-004 | `_reverse_geocode()` 放在 Agent 类中 | 🟢 仅一处调用 | 增加更多地理位置逻辑 | 移到 `src/utils/geocoding.py` |
+| TD-005 | `data/` 目录散落多个 JSON 文件，无统一数据访问层 | 🟢 文件少可管理 | 数据文件超过 5 个 | 引入 `DataStore` 抽象层统一读写 |
+| TD-006 | `clear_all_data()` 不清除用量和日志 | 🟢 设计意图（用量和日志独立生命周期） | 如需完整重置 | 增加 `--full` 选项或独立 API |
+| TD-007 | 测试只有 4 个独立脚本，无 pytest 组织 | 🟡 需改进 | 核心逻辑变复杂前 | 迁移到 `tests/` 目录 + pytest fixture |
+
+**下次重构窗口建议**：v0.4 开始前，花半天处理 TD-007（测试组织），其他项到触发条件再动。
 
 ---
 

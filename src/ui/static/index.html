@@ -93,6 +93,8 @@
             border: 1px solid var(--glass-border);
             border-radius: 20px;
             margin-bottom: 12px;
+            position: relative;
+            z-index: 10;
         }
 
         .avatar-wrap {
@@ -180,6 +182,82 @@
         }
         .usage-badge.over-budget {
             color: #f87171;
+        }
+
+        /* 搜索框 */
+        .header-search {
+            position: relative;
+            flex-shrink: 0;
+        }
+        .header-search input {
+            width: 160px;
+            padding: 6px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            background: rgba(255,255,255,0.06);
+            color: var(--text);
+            font-size: 12px;
+            outline: none;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .header-search input:focus {
+            width: 200px;
+            border-color: var(--accent);
+        }
+        .header-search input::placeholder { color: var(--text-dim); }
+
+        .search-dropdown {
+            position: absolute;
+            top: 38px;
+            right: 0;
+            width: 360px;
+            max-height: 420px;
+            overflow-y: auto;
+            background: rgba(20, 18, 50, 0.98);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .search-dropdown .search-item {
+            padding: 10px 14px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 13px;
+            line-height: 1.5;
+            transition: background 0.15s;
+        }
+        .search-dropdown .search-item:hover {
+            background: rgba(167,139,250,0.1);
+        }
+        .search-dropdown .search-item .role-tag {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 6px;
+            margin-right: 6px;
+            font-weight: 500;
+        }
+        .search-dropdown .search-item .role-tag.user {
+            background: rgba(102,126,234,0.3);
+            color: #a5b4fc;
+        }
+        .search-dropdown .search-item .role-tag.bot {
+            background: rgba(167,139,250,0.25);
+            color: #c4b5fd;
+        }
+        .search-dropdown .search-item mark {
+            background: rgba(251,191,36,0.35);
+            color: #fde68a;
+            border-radius: 2px;
+            padding: 0 1px;
+        }
+        .search-dropdown .search-empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 13px;
         }
 
         /* ========== 聊天区域 ========== */
@@ -533,6 +611,10 @@
                     <span id="usageBadge" class="usage-badge" style="display:none"></span>
                 </div>
             </div>
+            <div class="header-search">
+                <input type="text" id="searchInput" placeholder="🔍 搜索对话…" autocomplete="off">
+                <div id="searchResults" class="search-dropdown" style="display:none"></div>
+            </div>
         </div>
 
         <!-- 聊天区域 -->
@@ -553,6 +635,8 @@
         <!-- 操作按钮 -->
         <div class="action-bar">
             <button class="action-btn" onclick="resetChat()">🔄 重置对话</button>
+            <button class="action-btn" onclick="exportChat('markdown')">📥 导出 Markdown</button>
+            <button class="action-btn" onclick="exportChat('json')">📄 导出 JSON</button>
             <button class="action-btn danger" onclick="clearAll()">🗑️ 清除所有数据</button>
         </div>
     </div>
@@ -612,6 +696,71 @@
         }
         // 页面加载时请求位置
         requestLocation();
+
+        // ========== 搜索对话 ==========
+        const searchInput = document.getElementById('searchInput');
+        const searchResults = document.getElementById('searchResults');
+        let searchTimer = null;
+
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            const q = searchInput.value.trim();
+            if (!q) {
+                searchResults.style.display = 'none';
+                return;
+            }
+            searchTimer = setTimeout(() => doSearch(q), 250);
+        });
+
+        async function doSearch(q) {
+            try {
+                const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+                const data = await resp.json();
+                if (data.results.length === 0) {
+                    searchResults.innerHTML = '<div class="search-empty">未找到匹配的对话</div>';
+                } else {
+                    searchResults.innerHTML = data.results.map(r => {
+                        const roleTag = r.role === 'user'
+                            ? '<span class="role-tag user">我</span>'
+                            : '<span class="role-tag bot">小梦</span>';
+                        const preview = r.preview.replace(
+                            new RegExp(r.keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+                            m => `<mark>${m}</mark>`
+                        );
+                        return `<div class="search-item" data-index="${r.index}" onclick="jumpToMessage(${r.index})">${roleTag}${preview}</div>`;
+                    }).join('');
+                }
+                searchResults.style.display = 'block';
+            } catch (_) {}
+        }
+
+        function jumpToMessage(index) {
+            searchResults.style.display = 'none';
+            searchInput.value = '';
+            // 在 chatArea 中查找对应消息
+            const rows = chatArea.querySelectorAll('.msg-row');
+            for (const row of rows) {
+                // 欢迎文字占 DOM 第 0 位，历史索引 0 对应 DOM 索引 1
+                if (parseInt(row.dataset.msgIndex) === index + 1) {
+                    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    row.style.animation = 'none';
+                    row.offsetHeight; // force reflow
+                    row.style.animation = 'slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+                    row.style.boxShadow = '0 0 24px rgba(251,191,36,0.5)';
+                    setTimeout(() => { row.style.boxShadow = ''; }, 2000);
+                    return;
+                }
+            }
+            // 消息不在当前 DOM 中（历史太早被清屏了）
+            alert('该消息已不在当前聊天视图中，请通过导出功能查看完整历史。');
+        }
+
+        // 点击外部关闭搜索结果
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.header-search')) {
+                searchResults.style.display = 'none';
+            }
+        });
 
         // 情绪中文映射
         const emotionLabels = {
@@ -762,6 +911,7 @@
 
             row.appendChild(avatar);
             row.appendChild(bubble);
+            row.dataset.msgIndex = chatArea.children.length;
             chatArea.appendChild(row);
             scrollToBottom();
 
@@ -777,6 +927,16 @@
         // ========== 滚动到底部 ==========
         function scrollToBottom() {
             chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // ========== 导出对话 ==========
+        function exportChat(format) {
+            const a = document.createElement('a');
+            a.href = `/api/export?format=${format}`;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         }
 
         // ========== 重置对话 ==========

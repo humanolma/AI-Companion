@@ -33,12 +33,12 @@ def setup_logging(level: int = logging.INFO, log_dir: str = "./data/logs"):
     console.setFormatter(fmt)
     root.addHandler(console)
 
-    # 文件 — DEBUG 及以上，每天午夜切割，保留 7 天
+    # 文件 — DEBUG 及以上，每天午夜切割，保留 30 天
     file_handler = TimedRotatingFileHandler(
         os.path.join(log_dir, "companion"),
         when="midnight",
         interval=1,
-        backupCount=7,
+        backupCount=30,
         encoding="utf-8",
         utc=False,
     )

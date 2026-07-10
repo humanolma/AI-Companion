@@ -17,6 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.agent.llm import get_llm
 from src.agent.emotion import EmotionDetector
 from src.agent.usage import estimate_tokens
+from src.agent.profile import UserProfile
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ class CompanionAgent:
 
         # 用量追踪（可选）
         self.usage_tracker = usage_tracker
+
+        # 用户画像（从对话中自动提取个人信息）
+        self.user_profile = UserProfile(data_file=settings.user_profile_file)
 
         # 短期记忆（对话上下文）
         self.history: List = []
@@ -193,6 +197,11 @@ class CompanionAgent:
                 "当用户需求涉及这些工具的能力（如查地点、路线、周边搜索等）时，主动调用它们，"
                 "并把结果自然地融入你的回复中。"
             )
+        # 用户画像：注入已知个人信息
+        profile_context = self.user_profile.format_context()
+        if profile_context:
+            system_message += profile_context
+
         # 位置感知：逆地理编码获取城市名，注入 System Prompt
         if location and settings.amap_maps_api_key:
             city = self._reverse_geocode(location)
@@ -234,6 +243,12 @@ class CompanionAgent:
 
         # 持久化对话历史
         self._save_history()
+
+        # 用户画像提取（静默，失败不影响对话）
+        try:
+            self.user_profile.extract_and_merge(user_input, response_text, self.llm)
+        except Exception:
+            pass
 
         return response_text
 
@@ -297,6 +312,12 @@ class CompanionAgent:
         # 持久化对话历史
         self._save_history()
 
+        # 用户画像提取（静默，失败不影响对话）
+        try:
+            self.user_profile.extract_and_merge(user_input, full_response, self.llm)
+        except Exception:
+            pass
+
     def reset(self):
         """重置对话（只清空短期记忆，不删文件）"""
         self.history = []
@@ -358,6 +379,7 @@ class CompanionAgent:
             self.long_term_memory.clear_memories()
 
     def clear_all_data(self):
-        """一键清除所有数据（对话历史 + 长期记忆）"""
+        """一键清除所有数据（对话历史 + 长期记忆 + 用户画像）"""
         self.clear_chat_history()
         self.clear_long_term_memory()
+        self.user_profile.clear()

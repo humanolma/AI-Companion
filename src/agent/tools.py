@@ -100,6 +100,12 @@ class MCPToolManager:
                 },
             }
 
+        # 时间 MCP：无需 API Key，始终启用
+        configs["time"] = {
+            "command": "python",
+            "args": ["-m", "mcp_server_time"],
+        }
+
         # Tavily 搜索 MCP：配置了 API Key 才自动启用
         if settings.tavily_api_key:
             configs["tavily"] = {
