@@ -6,14 +6,9 @@ AI 虚拟伴侣 — 入口文件
 
 然后浏览器打开 http://127.0.0.1:8080
 """
-# 抑制第三方库的进度条和调试输出
-import os
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["TQDM_DISABLE"] = "1"
-
 import gc
 import logging
+import os
 import signal
 import uvicorn
 from src.ui.server import app

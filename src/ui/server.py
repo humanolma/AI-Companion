@@ -191,6 +191,26 @@ async def search_chat(q: str = ""):
 
     return JSONResponse({"results": results, "total": len(results)})
 
+@app.get("/api/health")
+async def health():
+    """健康检查：LLM 连通性 + MCP 工具状态"""
+    import time as _time
+    start = _time.time()
+    alive = True
+    try:
+        agent.llm.invoke("ping")
+    except Exception:
+        alive = False
+    latency = round((_time.time() - start) * 1000)
+
+    return JSONResponse({
+        "status": "ok" if alive else "degraded",
+        "llm": alive,
+        "llm_latency_ms": latency,
+        "mcp_tools": len(agent.tools),
+        "memory_count": len(agent.history),
+    })
+
 @app.get("/api/usage")
 async def get_usage():
     """获取今日用量统计"""

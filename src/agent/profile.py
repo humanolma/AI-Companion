@@ -12,7 +12,6 @@
 import json
 import os
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +51,6 @@ class UserProfile:
         :return: 是否有新信息被提取
         """
         try:
-            messages = [
-                {"role": "user", "content": f"用户消息：{user_input}\nAI回复：{ai_response}\n\n{EXTRACTION_PROMPT}"},
-            ]
             # 直接调 LLM（走 OpenAI 兼容 API，非流式）
             from langchain_core.messages import HumanMessage, SystemMessage
             response = llm.invoke([

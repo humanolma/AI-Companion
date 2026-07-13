@@ -12,7 +12,6 @@ from typing import Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.agent.llm import get_llm
 from src.agent.usage import estimate_tokens
-from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 class Settings(BaseSettings):
     """应用配置类（从环境变量 + .env 文件读取）"""
@@ -21,11 +20,11 @@ class Settings(BaseSettings):
     # === Embedding 配置（用于长期记忆）===
     # 使用阿里云 DashScope text-embedding-v3
     embedding_model: str = "text-embedding-v3"
-    embedding_device: str = "cpu"  # "cpu" or "cuda"（仅本地模型使用）
     
     # === 记忆配置 ===
     chroma_persist_dir: str = "./data/chroma"
     memory_retrieval_k: int = 3  # 每次检索返回的最相关记忆条数
+    memory_decay_half_life: int = 30  # 时间衰减半衰期（天），0=不衰减
     max_short_term_history: int = 20  # 短期记忆最大条数（Human+AI 各算一条）
 
     # === 对话持久化 ===

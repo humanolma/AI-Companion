@@ -1,9 +1,16 @@
 """
 长期记忆模块 — 使用 ChromaDB 向量数据库存储和检索对话历史
 
-⚠️ 注意：使用阿里云 DashScope text-embedding-v3 原生 API
+特性：
+- DashScope text-embedding-v3 语义检索
+- 时间衰减：越久远的记忆权重越低（可配置半衰期）
+- 自动持久化
 """
+
+import math
+import time
 import requests
+from datetime import datetime, timezone
 from typing import List
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
@@ -43,15 +50,26 @@ class DashScopeEmbeddings(Embeddings):
         return self._call_api([text], text_type="query")[0]
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(ts: str) -> float:
+    """解析 ISO 时间戳为 Unix 时间（秒），失败返回 0"""
+    try:
+        return datetime.fromisoformat(ts).timestamp()
+    except Exception:
+        return 0
+
+
 class LongTermMemory:
-    """长期记忆管理器（基于 ChromaDB 向量数据库）"""
+    """长期记忆管理器（基于 ChromaDB + 时间衰减）"""
 
     def __init__(self, user_id: str = "default"):
         self.user_id = user_id
         self.db_path = settings.chroma_persist_dir
         self.collection_name = f"memory_{user_id}"
 
-        # 使用阿里云 DashScope text-embedding-v3 原生 API
         self.embeddings = DashScopeEmbeddings(
             api_key=settings.dashscope_api_key,
             model=settings.embedding_model,
@@ -62,7 +80,6 @@ class LongTermMemory:
         self._init_vectorstore()
 
     def _init_vectorstore(self):
-        """初始化向量数据库"""
         self.vectorstore = Chroma(
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
@@ -72,38 +89,57 @@ class LongTermMemory:
             search_kwargs={"k": settings.memory_retrieval_k}
         )
 
-    def add_memory(self, user_input: str, agent_response: str):
-        """
-        将一轮对话存入长期记忆
-        """
-        # 拼接成一段文本
-        text = f"用户：{user_input}\n伴侣：{agent_response}"
+    # ── 写入 ──────────────────────────────────────────────────
 
-        # 存入向量数据库
+    def add_memory(self, user_input: str, agent_response: str):
+        text = f"用户：{user_input}\n伴侣：{agent_response}"
         self.vectorstore.add_texts(
             texts=[text],
             metadatas=[{
                 "user_id": self.user_id,
                 "type": "conversation",
+                "timestamp": _now_iso(),
             }],
         )
-        # Chroma 会自动持久化（persist_directory 模式下）
+
+    # ── 检索（含时间衰减）─────────────────────────────────────
 
     def retrieve_memories(self, query: str) -> List[str]:
-        """
-        根据用户输入，检索最相关的历史记忆
-        返回：相关记忆文本列表（最多 k 条）
-        """
-        if not self.retriever:
+        """检索最相关记忆，加入时间衰减后重排序"""
+        if not self.vectorstore:
             return []
-        docs = self.retriever.invoke(query)
-        return [doc.page_content for doc in docs]
+
+        half_life = settings.memory_decay_half_life
+        now_ts = time.time()
+
+        # 多取一些候选，供衰减后筛选
+        fetch_k = max(settings.memory_retrieval_k * 3, 10)
+        results = self.vectorstore.similarity_search_with_score(query, k=fetch_k)
+
+        scored = []
+        for doc, sim_score in results:
+            ts_str = doc.metadata.get("timestamp", "")
+            doc_ts = _parse_iso(ts_str) if ts_str else 0
+
+            # 时间衰减：exp(-age_seconds / half_life_seconds)
+            age = now_ts - doc_ts if doc_ts > 0 else 0
+            if half_life > 0 and age > 0:
+                decay = math.exp(-age / (half_life * 86400))
+            else:
+                decay = 1.0
+
+            # 综合分：语义相似度 * 时间衰减（sim_score 越小越相似）
+            combined = (1.0 - sim_score) * decay
+            scored.append((combined, doc.page_content))
+
+        # 按综合分降序，取 top-k
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [text for _, text in scored[:settings.memory_retrieval_k]]
 
     def clear_memories(self):
-        """清空该用户的长期记忆"""
         self.vectorstore.delete_collection()
         self._init_vectorstore()
 
+
 def get_memory(user_id: str = "default") -> LongTermMemory:
-    """工厂函数：获取长期记忆实例"""
     return LongTermMemory(user_id=user_id)

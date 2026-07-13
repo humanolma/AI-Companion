@@ -84,7 +84,9 @@ class MCPToolManager:
     def __init__(self):
         self._sessions: List[tuple] = []  # (session, session_cm, proc_cm)
         self.tools: List[BaseTool] = []
-        self._loop: asyncio.AbstractEventLoop = None  # 连接时记录事件循环
+        self._loop: asyncio.AbstractEventLoop = None
+        self._retry_counts: dict = {}  # 重连计数
+        self._max_retries = 3
 
     def _build_server_configs(self) -> dict:
         """构建 MCP 服务器配置（名称 -> 连接参数）"""

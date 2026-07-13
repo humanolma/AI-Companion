@@ -6,6 +6,8 @@ import os
 
 # 确保项目根目录在 sys.path 中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from src.agent.companion import CompanionAgent
 from src.config.settings import settings

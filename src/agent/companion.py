@@ -11,7 +11,7 @@ import json
 import os
 import logging
 import httpx
-from typing import List, Optional, Generator
+from typing import Generator
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.agent.llm import get_llm
@@ -49,7 +49,7 @@ class CompanionAgent:
         self.user_profile = UserProfile(data_file=settings.user_profile_file)
 
         # 短期记忆（对话上下文）
-        self.history: List = []
+        self.history: list = []
 
         # 长期记忆（可选）
         self.use_long_term_memory = use_long_term_memory
@@ -146,13 +146,13 @@ class CompanionAgent:
             iterations += 1
         return response.content, tokens_in, tokens_out
 
-    def _format_long_term_context(self, memories: List[str]) -> str:
+    def _format_long_term_context(self, memories: list[str]) -> str:
         """将检索到的长期记忆格式化为文本"""
         if not memories:
             return ""
         return "\n【长期记忆】以下是你之前和用户的对话片段，请参考：\n" + "\n---\n".join(memories)
 
-    def _reverse_geocode(self, location: dict) -> Optional[str]:
+    def _reverse_geocode(self, location: dict) -> str | None:
         """用 AMap REST API 逆地理编码，返回城市名（同步 HTTP，不依赖 MCP）"""
         try:
             lng = location.get("lng") or location.get("longitude")
@@ -214,7 +214,7 @@ class CompanionAgent:
 
     def chat(self, user_input: str, location: dict = None) -> str:
         """与用户对话（一次性返回完整回复）"""
-        if not user_input:
+        if not user_input or not user_input.strip():
             return ""
 
         system_message = self._prepare_context(user_input, location=location)
@@ -263,7 +263,7 @@ class CompanionAgent:
         :param location: 可选，前端传来的 GPS 坐标 {lat, lng}
         :yield: 每次返回一个文本片段
         """
-        if not user_input:
+        if not user_input or not user_input.strip():
             return
 
         system_message = self._prepare_context(user_input, location=location)
@@ -275,30 +275,37 @@ class CompanionAgent:
 
         tokens_in = self._estimate_input_tokens(system_message, user_input)
 
-        # 有工具时：先同步完成工具调用（含多轮），再一次性返回最终回复
-        if self.tools:
-            messages = self._build_messages(system_message, user_input)
-            full_response, tool_tokens_in, tool_tokens_out = self._run_with_tools(messages)
-            tokens_in += tool_tokens_in
-            tokens_out = tool_tokens_out
-            yield full_response
-        else:
-            # 流式调用 LLM，逐 chunk 拼接
-            full_response = ""
-            for chunk in self.chain.stream({
-                "system_message": system_message,
-                "history": self.history,
-                "input": user_input,
-            }):
-                piece = chunk.content
-                full_response += piece
-                yield piece
-            tokens_out = estimate_tokens(full_response)
+        try:
+            # 有工具时：先同步完成工具调用（含多轮），再一次性返回最终回复
+            if self.tools:
+                messages = self._build_messages(system_message, user_input)
+                full_response, tool_tokens_in, tool_tokens_out = self._run_with_tools(messages)
+                tokens_in += tool_tokens_in
+                tokens_out = tool_tokens_out
+                yield full_response
+            else:
+                # 流式调用 LLM，逐 chunk 拼接
+                full_response = ""
+                for chunk in self.chain.stream({
+                    "system_message": system_message,
+                    "history": self.history,
+                    "input": user_input,
+                }):
+                    piece = chunk.content
+                    full_response += piece
+                    yield piece
+                tokens_out = estimate_tokens(full_response)
 
-        # 记录用量
-        if self.usage_tracker:
-            self.usage_tracker.record(tokens_in, tokens_out)
-            logger.debug("用量: +%d in / +%d out tokens", tokens_in, tokens_out)
+            # 记录用量
+            if self.usage_tracker:
+                self.usage_tracker.record(tokens_in, tokens_out)
+                logger.debug("用量: +%d in / +%d out tokens", tokens_in, tokens_out)
+
+        except Exception as e:
+            logger.error("LLM 调用失败: %s", e)
+            full_response = "抱歉，我暂时无法回复，请稍后再试～"
+            yield full_response
+            tokens_out = 0
 
         # 流结束后更新记忆
         self.history.append(HumanMessage(content=user_input))
