@@ -216,6 +216,26 @@ async def get_usage():
     """获取今日用量统计"""
     return JSONResponse(usage_tracker.get_stats())
 
+@app.get("/api/emotion/history")
+async def emotion_history(days: int = 7):
+    """获取情绪历史（按天聚合）"""
+    return JSONResponse(agent.get_emotion_history(days=days))
+
+@app.get("/api/calendar")
+async def get_calendar():
+    """获取未来日程列表"""
+    return JSONResponse(agent.calendar.list_events(upcoming_only=True))
+
+@app.post("/api/calendar")
+async def add_calendar(req: dict):
+    """添加日程"""
+    evt = agent.calendar.add_event(
+        req.get("title", ""),
+        req.get("datetime", ""),
+        req.get("notes", ""),
+    )
+    return JSONResponse(evt)
+
 @app.get("/api/profile")
 async def get_profile():
     """获取用户画像"""

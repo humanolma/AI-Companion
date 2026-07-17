@@ -11,6 +11,8 @@ import json
 import os
 import logging
 import httpx
+from collections import defaultdict
+from datetime import date, datetime
 from typing import Generator
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -18,6 +20,7 @@ from src.agent.llm import get_llm
 from src.agent.emotion import EmotionDetector
 from src.agent.usage import estimate_tokens
 from src.agent.profile import UserProfile
+from src.agent.calendar import get_calendar_manager, make_calendar_tool
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -39,14 +42,17 @@ class CompanionAgent:
         self.prompt = self._build_prompt()
         self.chain = self.prompt | self.llm
 
-        # MCP 工具（运行时可由 server lifespan 注入）
-        self._bind_tools(tools)
-
         # 用量追踪（可选）
         self.usage_tracker = usage_tracker
 
         # 用户画像（从对话中自动提取个人信息）
         self.user_profile = UserProfile(data_file=settings.user_profile_file)
+
+        # 日程管理
+        self.calendar = get_calendar_manager()
+
+        # MCP 工具（运行时可由 server lifespan 注入）
+        self._bind_tools(tools)
 
         # 短期记忆（对话上下文）
         self.history: list = []
@@ -93,10 +99,13 @@ class CompanionAgent:
         ])
 
     def _bind_tools(self, tools):
-        """绑定 MCP 工具到 LLM（支持运行时重复注入）"""
+        """绑定工具到 LLM（MCP + 日程），支持运行时重复注入"""
         self.tools = list(tools) if tools else []
+        # 加入日程工具
+        if hasattr(self, 'calendar') and self.calendar:
+            cal_tool = make_calendar_tool(self.calendar)
+            self.tools.append(cal_tool)
         self.tools_by_name = {t.name: t for t in self.tools}
-        # bind_tools 让 LLM 在回复中返回 tool_calls；无工具时退化为普通 LLM
         self.llm_with_tools = self.llm.bind_tools(self.tools) if self.tools else self.llm
 
     def set_tools(self, tools):
@@ -181,6 +190,8 @@ class CompanionAgent:
         if self.use_emotion and self.emotion_detector:
             self.current_emotion = self.emotion_detector.detect(user_input)
             emotion_adjustment = self.emotion_detector.get_adjustment(self.current_emotion)
+            # 记录情绪历史
+            self._record_emotion(self.current_emotion)
 
         system_message = self.system_prompt_template
         if emotion_adjustment:
@@ -201,6 +212,14 @@ class CompanionAgent:
         profile_context = self.user_profile.format_context()
         if profile_context:
             system_message += profile_context
+
+        # 已有日程：注入未来日程列表
+        upcoming = self.calendar.list_events(upcoming_only=True)
+        if upcoming:
+            lines = ["\n\n【日程提醒】用户已有的日程安排："]
+            for evt in upcoming[:5]:
+                lines.append(f"- {evt['title']}（{evt['datetime']}）")
+            system_message += "\n".join(lines)
 
         # 位置感知：逆地理编码获取城市名，注入 System Prompt
         if location and settings.amap_maps_api_key:
@@ -324,6 +343,45 @@ class CompanionAgent:
             self.user_profile.extract_and_merge(user_input, full_response, self.llm)
         except Exception:
             pass
+
+    # ── 情绪历史 ─────────────────────────────────────────
+
+    def _record_emotion(self, emotion: str):
+        filepath = "./data/emotion_history.json"
+        today = str(date.today())
+        now = datetime.now().strftime("%H:%M")
+        entry = {"date": today, "time": now, "emotion": emotion}
+        data = []
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data.append(entry)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def get_emotion_history(self, days: int = 7) -> list:
+        filepath = "./data/emotion_history.json"
+        if not os.path.exists(filepath):
+            return []
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        # 按天聚合：{date: {happy: N, sad: N, ...}}
+        from collections import defaultdict
+        cutoff = date.today()
+        result = defaultdict(lambda: {"happy": 0, "sad": 0, "angry": 0, "anxious": 0, "neutral": 0})
+        for e in data:
+            d = e["date"]
+            em = e.get("emotion", "neutral")
+            if em in result[d]:
+                result[d][em] += 1
+        return [{"date": d, **counts} for d, counts in sorted(result.items())[-days:]]
 
     def reset(self):
         """重置对话（只清空短期记忆，不删文件）"""
