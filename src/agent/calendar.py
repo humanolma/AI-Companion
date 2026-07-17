@@ -1,27 +1,47 @@
 """
-日程管理 — 自然语言创建事件、JSON 持久化、LangChain Tool
-
-用法：
-    from src.agent.calendar import CalendarManager, make_calendar_tool
-
-    mgr = CalendarManager()
-    tool = make_calendar_tool(mgr)
-    mgr.add_event("开会", "2026-07-16T15:00", "产品评审")
+日程管理 — 自然语言创建事件、JSON 持久化、LangChain Tool、.ics 系统日历导出
 """
 
 import json
 import os
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
+ICS_DIR = "./data/calendar_ics"
+
+
+def _make_ics(event: dict) -> str:
+    """生成 .ics 文件内容（带 5 分钟提前提醒）"""
+    dt = datetime.fromisoformat(event["datetime"])
+    dt_start = dt.strftime("%Y%m%dT%H%M%S")
+    dt_end = (dt + timedelta(hours=1)).strftime("%Y%m%dT%H%M%S")
+    uid = event["id"] + "@ai-companion"
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//AI Companion//CN
+BEGIN:VEVENT
+DTSTART:{dt_start}
+DTEND:{dt_end}
+SUMMARY:{event['title']}
+DESCRIPTION:{event.get('notes', '')}
+UID:{uid}
+DTSTAMP:{now}
+BEGIN:VALARM
+TRIGGER:-PT5M
+ACTION:DISPLAY
+DESCRIPTION:⏰ {event['title']} 即将开始
+END:VALARM
+END:VEVENT
+END:VCALENDAR"""
 
 
 class CalendarManager:
-    """日程管理器：CRUD + JSON 持久化"""
+    """日程管理器：CRUD + JSON 持久化 + .ics 导出"""
 
     def __init__(self, data_file: str = "./data/calendar.json"):
         self._file = data_file
@@ -31,7 +51,7 @@ class CalendarManager:
     # ── CRUD ────────────────────────────────────────────────
 
     def add_event(self, title: str, datetime_str: str, notes: str = "") -> dict:
-        """添加一个日程。datetime_str 应为 ISO 格式如 '2026-07-16T15:00'"""
+        """添加日程。datetime_str 应为 ISO 格式如 '2026-07-16T15:00'"""
         event = {
             "id": uuid.uuid4().hex[:8],
             "title": title,
@@ -42,11 +62,12 @@ class CalendarManager:
         self._events.append(event)
         self._events.sort(key=lambda e: e["datetime"])
         self._save()
+        self._save_ics(event)
         logger.info("日程已创建: %s @ %s", title, datetime_str)
         return event
 
     def list_events(self, upcoming_only: bool = True) -> List[dict]:
-        """列出日程。upcoming_only=True 只返回未来的"""
+        self._cleanup()  # 每次列出前先清理过期日程
         now = datetime.now(timezone.utc).isoformat()
         if upcoming_only:
             return [e for e in self._events if e["datetime"] > now]
@@ -60,7 +81,20 @@ class CalendarManager:
                 return True
         return False
 
+    def get_ics_path(self, event_id: str) -> str | None:
+        path = os.path.join(ICS_DIR, f"{event_id}.ics")
+        return path if os.path.exists(path) else None
+
     # ── 内部 ────────────────────────────────────────────────
+
+    def _cleanup(self, keep_days: int = 30):
+        """自动删除 N 天前的过期日程"""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat()
+        before = len(self._events)
+        self._events = [e for e in self._events if e["datetime"] > cutoff]
+        if len(self._events) < before:
+            self._save()
+            logger.info("已清理 %d 条过期日程", before - len(self._events))
 
     def _save(self):
         os.makedirs(os.path.dirname(self._file), exist_ok=True)
@@ -78,6 +112,14 @@ class CalendarManager:
             except Exception:
                 self._events = []
 
+    def _save_ics(self, event: dict):
+        """生成 .ics 文件，双击即可导入系统日历（Windows/Outlook/Google Calendar）"""
+        os.makedirs(ICS_DIR, exist_ok=True)
+        path = os.path.join(ICS_DIR, f"{event['id']}.ics")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_make_ics(event))
+        logger.info(".ics 已生成: %s", path)
+
 
 # ── 全局单例 ────────────────────────────────────────────────
 
@@ -92,12 +134,16 @@ def get_calendar_manager(data_file: str = "./data/calendar.json") -> CalendarMan
 
 
 def make_calendar_tool(mgr: CalendarManager):
-    """创建 LangChain Tool，让 LLM 可以调 schedule_event"""
+    """LangChain Tool — LLM 可调 schedule_event"""
 
     @tool
     def schedule_event(title: str, datetime: str, notes: str = "") -> str:
-        """创建日程提醒。title=事件名称，datetime=ISO格式时间（如 2026-07-16T15:00），notes=备注（可选）"""
+        """创建日程。title=名称，datetime=ISO格式(如2026-07-16T15:00)，notes=备注"""
         evt = mgr.add_event(title, datetime, notes)
-        return f"已创建日程：{evt['title']}，时间 {evt['datetime']}"
+        ics = mgr.get_ics_path(evt["id"])
+        return (
+            f"已创建日程：{evt['title']}，时间 {evt['datetime']}。"
+            + (f" .ics 文件已生成，双击导入系统日历即可获得提醒。" if ics else "")
+        )
 
     return schedule_event

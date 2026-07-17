@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>小梦 · AI 虚拟伴侣</title>
+    <title>小梦 · AI 虚拟助手</title>
     <link rel="icon" href="/static/avatar.jpg">
     <!-- Markdown 渲染: marked + highlight.js -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css">
@@ -650,22 +650,6 @@
         .emotion-bar.neutral { background: #4ade80; }
         .emotion-day-label { font-size: 9px; color: var(--text-dim); }
 
-        /* 日程条 */
-        .calendar-strip {
-            display: flex; align-items: center; gap: 10px;
-            padding: 8px 14px; margin-bottom: 8px;
-            background: var(--glass); backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border); border-radius: 12px;
-            font-size: 12px;
-        }
-        .cal-label { color: var(--accent); font-weight: 500; white-space: nowrap; }
-        .cal-items { display: flex; gap: 8px; overflow-x: auto; }
-        .cal-item {
-            white-space: nowrap; padding: 3px 10px; border-radius: 8px;
-            background: rgba(167,139,250,0.12); color: var(--text-dim);
-        }
-        .cal-empty { color: var(--text-dim); font-size: 11px; }
-
         /* 操作按钮 */
         .action-bar {
             display: flex;
@@ -738,17 +722,11 @@
             <div class="emotion-chart" id="emotionChart" style="display:none"></div>
         </div>
 
-        <!-- 日程条 -->
-        <div class="calendar-strip" id="calendarStrip" style="display:none">
-            <span class="cal-label">📅 日程</span>
-            <div class="cal-items" id="calItems"></div>
-        </div>
-
         <!-- 聊天区域 -->
         <div class="chat-area" id="chatArea">
             <div class="welcome-text" id="welcomeText">
                 <span class="big">你好呀 ~</span>
-                我是<span style="color:var(--accent)">小梦</span>，你的 AI 虚拟伴侣<br>
+                我是<span style="color:var(--accent)">小梦</span>，你的 AI 虚拟助手<br>
                 有什么想聊的，随时告诉我 ✨
             </div>
         </div>
@@ -846,6 +824,17 @@
         window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
             if (!localStorage.getItem('theme')) applyTheme(e.matches ? 'light' : 'dark');
         });
+
+        // ========== 通知权限（首次点击页面时请求）==========
+        function ensureNotifyPermission() {
+            if (!('Notification' in window)) return;
+            if (Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }
+        document.addEventListener('click', ensureNotifyPermission, { once: true });
+
+        // 日程实时提醒：待完善（当前通过 .ics 导入系统日历实现提醒）
 
         // 页面加载时请求位置
         requestLocation();
@@ -1096,7 +1085,6 @@
             sendBtn.disabled = false;
             msgInput.focus();
             refreshUsage();
-            loadCalendar();
         }
 
         // ========== 刷新用量显示 ==========
@@ -1211,22 +1199,6 @@
             }
         }
 
-        // ========== 加载日程 ==========
-        async function loadCalendar() {
-            try {
-                const r = await fetch('/api/calendar'); const events = await r.json();
-                const strip = document.getElementById('calendarStrip');
-                const items = document.getElementById('calItems');
-                if (!events.length) { strip.style.display = 'none'; return; }
-                strip.style.display = 'flex';
-                items.innerHTML = events.slice(0, 5).map(e => {
-                    const d = new Date(e.datetime);
-                    const ds = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-                    return `<span class="cal-item">${ds} ${e.title}</span>`;
-                }).join('');
-            } catch (_) {}
-        }
-
         // ========== 加载情绪趋势 ==========
         async function loadEmotionChart() {
             try {
@@ -1304,7 +1276,6 @@
 
         // 页面加载后获取历史对话
         loadHistory();
-        loadCalendar();
         loadEmotionChart();
         loadPersonas();
         msgInput.focus();

@@ -14,7 +14,7 @@ import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -221,6 +221,14 @@ async def get_usage():
 async def emotion_history(days: int = 7):
     """获取情绪历史（按天聚合）"""
     return JSONResponse(agent.get_emotion_history(days=days))
+
+@app.get("/api/calendar/{event_id}.ics")
+async def download_ics(event_id: str):
+    """下载日程的 .ics 文件（双击导入系统日历）"""
+    path = agent.calendar.get_ics_path(event_id)
+    if not path:
+        return JSONResponse({"error": "文件不存在"}, status_code=404)
+    return FileResponse(path, media_type="text/calendar", filename=f"{event_id}.ics")
 
 @app.get("/api/calendar")
 async def get_calendar():

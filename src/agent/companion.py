@@ -82,7 +82,7 @@ class CompanionAgent:
         personality = getattr(self, 'companion_personality', settings.companion_personality)
         backstory = getattr(self, 'companion_backstory', settings.companion_backstory)
 
-        base = f"""你是 {name}，一个 {personality} 的 AI 伴侣。
+        base = f"""你是 {name}，一个 {personality} 的 AI 助手。
 
 {backstory if backstory else ''}
 
@@ -95,7 +95,6 @@ class CompanionAgent:
 
 当前对话中，请根据历史对话上下文，给出贴心、自然的回复。
 """
-        return base
         return base
 
     def _build_prompt(self) -> ChatPromptTemplate:
