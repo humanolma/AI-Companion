@@ -38,6 +38,9 @@ class CompanionAgent:
         :param usage_tracker: UsageTracker 实例（可选，用于用量监控）
         """
         self.llm = get_llm()
+        self.companion_name = settings.companion_name
+        self.companion_personality = settings.companion_personality
+        self.companion_backstory = settings.companion_backstory
         self.system_prompt_template = self._build_system_prompt()
         self.prompt = self._build_prompt()
         self.chain = self.prompt | self.llm
@@ -74,13 +77,17 @@ class CompanionAgent:
         self._load_history()
 
     def _build_system_prompt(self) -> str:
-        """构建系统 Prompt（静态部分）"""
-        base = f"""你是 {settings.companion_name}，一个 {settings.companion_personality} 的 AI 伴侣。
+        """构建系统 Prompt（使用当前人设）"""
+        name = getattr(self, 'companion_name', settings.companion_name)
+        personality = getattr(self, 'companion_personality', settings.companion_personality)
+        backstory = getattr(self, 'companion_backstory', settings.companion_backstory)
 
-{settings.companion_backstory if settings.companion_backstory else ''}
+        base = f"""你是 {name}，一个 {personality} 的 AI 伴侣。
+
+{backstory if backstory else ''}
 
 你的特点：
-1. 说话风格：{settings.companion_personality}
+1. 说话风格：{personality}
 2. 会记住和用户的对话历史
 3. 会在合适的时候主动关心用户
 4. 回复简洁、自然，不要太长
@@ -88,6 +95,7 @@ class CompanionAgent:
 
 当前对话中，请根据历史对话上下文，给出贴心、自然的回复。
 """
+        return base
         return base
 
     def _build_prompt(self) -> ChatPromptTemplate:
@@ -276,14 +284,36 @@ class CompanionAgent:
         history_text = "".join(m.content for m in self.history)
         return estimate_tokens(system_message + history_text + user_input)
 
-    def chat_stream(self, user_input: str, location: dict = None) -> Generator[str, None, None]:
+    def chat_stream(self, user_input: str, location: dict = None, documents: list = None) -> Generator[str, None, None]:
         """
         流式对话（逐字 yield 回复内容，打字机效果）
         :param location: 可选，前端传来的 GPS 坐标 {lat, lng}
+        :param documents: 可选，上传的文档列表 [{filename, text}]
         :yield: 每次返回一个文本片段
         """
         if not user_input or not user_input.strip():
             return
+
+        # 文档上下文：将文件内容注入到用户消息前（仅影响 LLM 输入，不影响情绪/记忆）
+        effective_input = user_input
+        if documents:
+            doc_parts = []
+            total_chars = 0
+            max_total = 12000  # 所有文档总字符上限
+            for d in documents[:5]:  # 最多5个文档
+                if d.get("text"):
+                    chunk = d["text"][:max(1000, max_total - total_chars)]
+                    doc_parts.append(f"### {d.get('filename', '未知')}\n{chunk}")
+                    total_chars += len(chunk)
+                    if total_chars >= max_total:
+                        doc_parts.append("[后续内容已截断...]")
+                        break
+            if doc_parts:
+                effective_input = (
+                    f"[用户上传了 {len(documents)} 个文件，请基于以下文件内容回答用户的问题]\n\n"
+                    + "\n\n".join(doc_parts)
+                    + f"\n\n=== 用户问题 ===\n{user_input}"
+                )
 
         system_message = self._prepare_context(user_input, location=location)
 
@@ -292,12 +322,12 @@ class CompanionAgent:
             yield "⚠️ 今日用量已达预算上限，请明天再试或调整预算设置。"
             return
 
-        tokens_in = self._estimate_input_tokens(system_message, user_input)
+        tokens_in = self._estimate_input_tokens(system_message, effective_input)
 
         try:
             # 有工具时：先同步完成工具调用（含多轮），再一次性返回最终回复
             if self.tools:
-                messages = self._build_messages(system_message, user_input)
+                messages = self._build_messages(system_message, effective_input)
                 full_response, tool_tokens_in, tool_tokens_out = self._run_with_tools(messages)
                 tokens_in += tool_tokens_in
                 tokens_out = tool_tokens_out
@@ -308,7 +338,7 @@ class CompanionAgent:
                 for chunk in self.chain.stream({
                     "system_message": system_message,
                     "history": self.history,
-                    "input": user_input,
+                    "input": effective_input,
                 }):
                     piece = chunk.content
                     full_response += piece
@@ -382,6 +412,14 @@ class CompanionAgent:
             if em in result[d]:
                 result[d][em] += 1
         return [{"date": d, **counts} for d, counts in sorted(result.items())[-days:]]
+
+    def apply_persona(self, name: str, personality: str, backstory: str = ""):
+        """运行时切换人设（更新 System Prompt 模板）"""
+        self.companion_name = name
+        self.companion_personality = personality
+        self.companion_backstory = backstory
+        self.system_prompt_template = self._build_system_prompt()
+        logger.info("人设已切换: %s", name)
 
     def reset(self):
         """重置对话（只清空短期记忆，不删文件）"""

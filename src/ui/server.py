@@ -13,7 +13,7 @@ import json
 import os
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -56,7 +56,8 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 class ChatRequest(BaseModel):
     message: str
-    location: Optional[dict] = None  # {lat: number, lng: number}
+    location: Optional[dict] = None
+    documents: Optional[list] = None  # [{filename, text}]
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -89,7 +90,7 @@ async def chat(req: ChatRequest):
         yield f"data: {emotion_data}\n\n"
 
         # 流式发送回复
-        for piece in agent.chat_stream(user_input, location=req.location):
+        for piece in agent.chat_stream(user_input, location=req.location, documents=req.documents):
             chunk_data = json.dumps({
                 "type": "chunk",
                 "content": piece,
@@ -235,6 +236,67 @@ async def add_calendar(req: dict):
         req.get("notes", ""),
     )
     return JSONResponse(evt)
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """上传并解析文档（PDF/Word/TXT/Markdown），返回纯文本"""
+    import tempfile
+    filename = (file.filename or "").lower()
+    content = await file.read()
+
+    try:
+        if filename.endswith(".pdf"):
+            import pdfplumber
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(content); tmp.flush()
+                with pdfplumber.open(tmp.name) as pdf:
+                    text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+            os.unlink(tmp.name)
+            return JSONResponse({"text": text[:50000], "filename": file.filename})
+
+        elif filename.endswith(".docx"):
+            import docx
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp.write(content); tmp.flush()
+                doc = docx.Document(tmp.name)
+                text = "\n".join(p.text for p in doc.paragraphs)
+            os.unlink(tmp.name)
+            return JSONResponse({"text": text[:50000], "filename": file.filename})
+
+        elif filename.endswith((".txt", ".md", ".markdown")):
+            text = content.decode("utf-8", errors="replace")
+            return JSONResponse({"text": text[:50000], "filename": file.filename})
+
+        else:
+            return JSONResponse({"error": "不支持的文件格式，仅支持 PDF/Word/TXT/Markdown"}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({"error": f"文件解析失败: {str(e)}"}, status_code=500)
+
+@app.get("/api/personas")
+async def get_personas():
+    """获取所有人设预设"""
+    import json as _json
+    path = os.path.join(os.path.dirname(settings.chat_history_file), "personas.json")
+    if not os.path.exists(path):
+        return JSONResponse([])
+    with open(path, "r", encoding="utf-8") as f:
+        return JSONResponse(_json.load(f))
+
+@app.post("/api/persona/switch")
+async def switch_persona(req: dict):
+    """切换人设"""
+    persona_id = req.get("id", "")
+    path = os.path.join(os.path.dirname(settings.chat_history_file), "personas.json")
+    if os.path.exists(path):
+        import json as _json
+        with open(path, "r", encoding="utf-8") as f:
+            personas = _json.load(f)
+        for p in personas:
+            if p["id"] == persona_id:
+                agent.apply_persona(p["name"], p["personality"], p["backstory"])
+                return JSONResponse({"status": "ok", "name": p["name"]})
+    return JSONResponse({"status": "error", "message": "未找到该人设"}, status_code=400)
 
 @app.get("/api/profile")
 async def get_profile():
