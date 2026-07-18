@@ -82,8 +82,8 @@
         @keyframes slideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         .msg-row.user { align-self:flex-end; flex-direction:row-reverse; }
         .msg-avatar { width:32px; height:32px; border-radius:50%; flex-shrink:0; overflow:hidden; }
-        .msg-avatar.bot { box-shadow:0 0 0 3px rgba(196,160,240,0.2); }
-        .msg-avatar.bot img { width:100%; height:100%; object-fit:cover; }
+        .msg-avatar.bot,.msg-avatar.assistant { box-shadow:0 0 0 3px rgba(196,160,240,0.2); }
+        .msg-avatar.bot img, .msg-avatar.assistant img { width:32px; height:32px; display:block; border-radius:50%; object-fit:cover; }
         .msg-avatar.user { background:linear-gradient(135deg,var(--accent-strong),#d090d0); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; }
         .bubble { padding:8px 12px; border-radius:var(--radius-sm); font-size:13.5px; line-height:1.6; word-break:break-word; position:relative; }
         .msg-row.bot .bubble { background:var(--card-bg); border:1px solid var(--card-border); border-top-left-radius:3px; }
@@ -177,7 +177,7 @@
             <!-- 顶部栏 -->
             <div class="header">
                 <div class="avatar-wrap">
-                    <img class="avatar" src="avatar.jpg" alt="小梦">
+                    <img class="avatar" id="headerAvatar" alt="小梦">
                     <div class="status-dot"></div>
                 </div>
                 <div class="header-info">
@@ -429,7 +429,7 @@
         function appendMessage(role, content) {
             const row = document.createElement('div'); row.className=`msg-row ${role}`;
             const avatar = document.createElement('div'); avatar.className=`msg-avatar ${role}`;
-            if (role==='bot'||role==='assistant') { const img=document.createElement('img'); img.src='avatar.jpg'; img.alt='小梦'; avatar.appendChild(img); }
+            if (role==='bot'||role==='assistant') { const img=document.createElement('img'); img.src=`${API_BASE}/static/avatar.jpg`; img.alt='小梦'; avatar.appendChild(img); }
             else { avatar.textContent='我'; }
             const bubble = document.createElement('div'); bubble.className='bubble';
             bubble.innerHTML = renderMarkdown(content);
@@ -543,6 +543,7 @@
             input.value=''; document.getElementById('docBtn').textContent='📎';
         }
 
+        document.getElementById('headerAvatar').src = `${API_BASE}/static/avatar.jpg`;
         loadHistory(); loadEmotionChart(); loadPersonas(); msgInput.focus();
     </script>
 </body>

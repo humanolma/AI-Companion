@@ -64,6 +64,12 @@ app.add_middleware(
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# 头像直达（兼容前端相对路径引用）
+@app.get("/avatar.jpg")
+async def avatar():
+    return FileResponse(os.path.join(static_dir, "avatar.jpg"))
+
+
 class ChatRequest(BaseModel):
     message: str
     location: Optional[dict] = None
