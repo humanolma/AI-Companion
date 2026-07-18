@@ -50,6 +50,10 @@ AI-Companion/
 │   ├── chat_history.json            # 对话历史持久化文件
 │   ├── user_profile.json            # 用户画像（自动提取）
 │   ├── usage.json                   # 用量统计（每日 Token + 费用）
+│   ├── calendar.json                # 日程数据
+│   ├── emotion_history.json         # 情绪历史记录
+│   ├── personas.json                # 人设预设（5 套）
+│   ├── calendar_ics/                # .ics 日历文件
 │   ├── mcp_servers.json             # 额外 MCP 服务器配置（可选）
 │   ├── chroma/                      # ChromaDB 向量数据库目录
 │   └── logs/                        # 日志文件（按天切割，保留 30 天）
@@ -65,7 +69,8 @@ AI-Companion/
     │   ├── emotion.py               # 情感感知：LLM 情绪分析 + 自适应回复
     │   ├── tools.py                 # MCP 工具：高德 + Tavily + 时间
     │   ├── usage.py                 # 用量追踪：Token 估算 + 费用统计
-    │   └── profile.py               # 用户画像：自动提取 + 结构化存储
+    │   ├── profile.py               # 用户画像：自动提取 + 结构化存储
+    │   └── calendar.py              # 日程管理：JSON + .ics 导出 + LangChain Tool
     │
     ├── utils/
     │   └── logger.py                # 统一日志配置（TimedRotatingFileHandler）
