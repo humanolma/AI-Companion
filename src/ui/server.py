@@ -14,6 +14,7 @@ import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -49,6 +50,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI Virtual Companion", lifespan=lifespan)
+
+# CORS — 允许前端独立部署
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 静态文件目录
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")

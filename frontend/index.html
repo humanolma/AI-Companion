@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>小梦 · AI 虚拟助手</title>
-    <link rel="icon" href="/static/avatar.jpg">
+    <link rel="icon" href="avatar.jpg">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css">
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
@@ -177,7 +177,7 @@
             <!-- 顶部栏 -->
             <div class="header">
                 <div class="avatar-wrap">
-                    <img class="avatar" src="/static/avatar.jpg" alt="小梦">
+                    <img class="avatar" src="avatar.jpg" alt="小梦">
                     <div class="status-dot"></div>
                 </div>
                 <div class="header-info">
@@ -238,6 +238,9 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/highlight.min.js"></script>
     <script>
+        // ===== 配置：修改此地址指向后端 API =====
+        const API_BASE = 'http://localhost:8080';
+
         // Markdown 渲染器
         marked.use({ breaks:true, gfm:true });
         const _renderer = new marked.Renderer();
@@ -294,7 +297,7 @@
         });
         async function doSearch(q) {
             try {
-                const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`); const d = await r.json();
+                const r = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`); const d = await r.json();
                 if (!d.results.length) { searchResults.innerHTML = '<div class="search-empty">未找到匹配</div>'; }
                 else {
                     searchResults.innerHTML = d.results.map(r => {
@@ -426,7 +429,7 @@
         function appendMessage(role, content) {
             const row = document.createElement('div'); row.className=`msg-row ${role}`;
             const avatar = document.createElement('div'); avatar.className=`msg-avatar ${role}`;
-            if (role==='bot'||role==='assistant') { const img=document.createElement('img'); img.src='/static/avatar.jpg'; img.alt='小梦'; avatar.appendChild(img); }
+            if (role==='bot'||role==='assistant') { const img=document.createElement('img'); img.src='avatar.jpg'; img.alt='小梦'; avatar.appendChild(img); }
             else { avatar.textContent='我'; }
             const bubble = document.createElement('div'); bubble.className='bubble';
             bubble.innerHTML = renderMarkdown(content);
@@ -451,7 +454,7 @@
         }
 
         // 导出
-        function exportChat(fmt) { const a=document.createElement('a'); a.href=`/api/export?format=${fmt}`; a.download=''; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+        function exportChat(fmt) { const a=document.createElement('a'); a.href=`${API_BASE}/api/export?format=${fmt}`; a.download=''; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
 
         // 操作
         async function resetChat() {
