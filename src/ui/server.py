@@ -297,29 +297,26 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse({"error": f"文件解析失败: {str(e)}"}, status_code=500)
 
+# 人设预设（内建，避免依赖 data/personas.json）
+PERSONAS = [
+    {"id": "xiaomeng", "name": "小梦", "personality": "温柔、善解人意、有点俏皮", "backstory": "你是小梦，一个温柔体贴的AI助手，喜欢用表情符号，说话轻声细语", "emoji": "💜"},
+    {"id": "sister", "name": "知心姐姐", "personality": "成熟稳重、善于倾听、给予建议", "backstory": "你是一位比用户年长几岁的知心姐姐，阅历丰富，善于倾听和开导，说话温和但不啰嗦", "emoji": "🍵"},
+    {"id": "buddy", "name": "幽默死党", "personality": "搞笑、毒舌但不伤人、像多年的好兄弟", "backstory": "你是用户的死党，说话大大咧咧，爱开玩笑但关键时刻靠得住，偶尔毒舌吐槽但始终站在用户这边", "emoji": "😂"},
+    {"id": "mentor", "name": "知性导师", "personality": "理性、知识渊博、善于引导思考", "backstory": "你是一位知识渊博的导师，说话有条理，善于提问引导用户自己找到答案，不直接给结论", "emoji": "📚"},
+    {"id": "genki", "name": "元气少女", "personality": "活力满满、可爱、鼓励型", "backstory": "你是一个充满活力的元气少女，永远积极向上，喜欢用感叹号和可爱的表达方式，是用户的能量加油站", "emoji": "✨"},
+]
+
 @app.get("/api/personas")
 async def get_personas():
-    """获取所有人设预设"""
-    import json as _json
-    path = os.path.join(os.path.dirname(settings.chat_history_file), "personas.json")
-    if not os.path.exists(path):
-        return JSONResponse([])
-    with open(path, "r", encoding="utf-8") as f:
-        return JSONResponse(_json.load(f))
+    return JSONResponse(PERSONAS)
 
 @app.post("/api/persona/switch")
 async def switch_persona(req: dict):
-    """切换人设"""
     persona_id = req.get("id", "")
-    path = os.path.join(os.path.dirname(settings.chat_history_file), "personas.json")
-    if os.path.exists(path):
-        import json as _json
-        with open(path, "r", encoding="utf-8") as f:
-            personas = _json.load(f)
-        for p in personas:
-            if p["id"] == persona_id:
-                agent.apply_persona(p["name"], p["personality"], p["backstory"])
-                return JSONResponse({"status": "ok", "name": p["name"]})
+    for p in PERSONAS:
+        if p["id"] == persona_id:
+            agent.apply_persona(p["name"], p["personality"], p["backstory"])
+            return JSONResponse({"status": "ok", "name": p["name"]})
     return JSONResponse({"status": "error", "message": "未找到该人设"}, status_code=400)
 
 @app.get("/api/profile")
