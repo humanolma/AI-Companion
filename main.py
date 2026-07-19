@@ -4,7 +4,7 @@ AI 虚拟伴侣 — 入口文件
 启动方式：
     python main.py
 
-然后浏览器打开 http://127.0.0.1:8080
+然后浏览器打开 http://localhost:8080
 """
 import gc
 import logging
